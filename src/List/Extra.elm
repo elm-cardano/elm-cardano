@@ -1,4 +1,4 @@
-module List.Extra exposing (chunksOf, get64, indexedMap64, last, sublist, take64, updateAt)
+module List.Extra exposing (chunksOf, get64, indexedMap64, last, removeAt, sublist, take64, updateAt)
 
 import UInt64 as U64 exposing (UInt64)
 
@@ -73,6 +73,11 @@ updateAt i fn =
             else
                 x
         )
+
+
+removeAt : Int -> List a -> List a
+removeAt i list =
+    List.take i list ++ List.drop (i + 1) list
 
 
 sublist : Int -> Int -> List a -> List a
