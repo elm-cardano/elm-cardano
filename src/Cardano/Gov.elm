@@ -2,7 +2,7 @@ module Cardano.Gov exposing
     ( Drep(..), decodeDrep, encodeDrep
     , ProposalProcedure, proposalProcedureFromCbor
     , Action(..), decodeAction, encodeAction
-    , ActionId, actionIdFromCbor, encodeActionId
+    , ActionId, actionIdToString, actionIdFromCbor, encodeActionId
     , Constitution, decodeConstitution, encodeConstitution
     , ProtocolParamUpdate, noParamUpdate, decodeProtocolParamUpdate, encodeProtocolParamUpdate
     , PoolVotingThresholds, decodePoolVotingThresholds, encodePoolVotingThresholds
@@ -24,7 +24,7 @@ module Cardano.Gov exposing
 
 @docs Action, decodeAction, encodeAction
 
-@docs ActionId, actionIdFromCbor, encodeActionId
+@docs ActionId, actionIdToString, actionIdFromCbor, encodeActionId
 
 @docs Constitution, decodeConstitution, encodeConstitution
 
@@ -318,6 +318,15 @@ type alias ActionId =
     { transactionId : Bytes TransactionId
     , govActionIndex : Int
     }
+
+
+{-| Convert [ActionId] into its Hex string.
+-}
+actionIdToString : ActionId -> String
+actionIdToString { transactionId, govActionIndex } =
+    Bytes.toHex transactionId
+        ++ "#"
+        ++ String.fromInt govActionIndex
 
 
 {-| Decoder for ActionId type.
