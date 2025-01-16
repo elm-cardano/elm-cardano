@@ -211,13 +211,19 @@ fn run_subcommand(run_args: RunSubCommand) -> anyhow::Result<()> {
 /// Kernel patching the elm compiler output with uplc_wasm
 fn kernel_patching_uplc_wasm_iife(elm_js: &str) -> String {
     let eval_def = include_str!("../../templates/eval-script-costs-kernel.js");
-    let old_body = "return $elm$core$Result$Err('To build a Tx containing scripts, you need to use the elm-cardano binary instead of directly the elm binary. Details are in the elm-cardano GitHub repo.');";
-    let new_body = "return evalScriptsCostsKernel(_v0);";
+    let param_app_def = include_str!("../../templates/apply-params-to-script-kernel.js");
+    let old_eval_body = "return $elm$core$Result$Err('To build a Tx containing scripts, you need to use the elm-cardano binary instead of directly the elm binary. Details are in the elm-cardano GitHub repo.');";
+    let new_eval_body = "return evalScriptsCostsKernel(_v0);";
+    let old_param_app_body = "return $elm$core$Result$Err('To apply parameters to a script, you need to use the elm-cardano binary instead of directly the elm binary. Details are in the elm-cardano GitHub repo.');";
+    let new_param_app_body = "return applyParamsToScriptKernel(_v0);";
     let use_strict_offset = elm_js.find("'use strict'").unwrap();
     [
         &elm_js[..use_strict_offset],
         &eval_def,
-        &elm_js[use_strict_offset..].replacen(old_body, new_body, 1),
+        &param_app_def,
+        &elm_js[use_strict_offset..]
+            .replacen(old_eval_body, new_eval_body, 1)
+            .replacen(old_param_app_body, new_param_app_body, 1),
     ]
     .join("\n")
 }
