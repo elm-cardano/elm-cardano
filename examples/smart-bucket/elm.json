@@ -16,6 +16,7 @@
             "elm/html": "1.0.0",
             "elm/http": "2.0.0",
             "elm/json": "1.1.3",
+            "elm-cardano/bech32": "1.0.0",
             "elm-toulouse/cbor": "4.0.1",
             "elmcraft/core-extra": "2.1.0",
             "jxxcarlson/hex": "4.0.0",
