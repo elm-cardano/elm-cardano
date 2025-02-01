@@ -7,6 +7,7 @@ module Cardano.Utxo exposing
     , minAda, checkMinAda, minAdaForAssets
     , encodeOutputReference, encodeOutput, encodeDatumOption
     , decodeOutputReference, decodeOutput
+    , outputReferenceToData
     )
 
 {-| Handling outputs.
@@ -48,6 +49,8 @@ module Cardano.Utxo exposing
 
 @docs decodeOutputReference, decodeOutput
 
+@docs outputReferenceToData
+
 -}
 
 import Bytes as ElmBytes
@@ -62,6 +65,7 @@ import Cbor.Decode.Extra as D
 import Cbor.Encode as E
 import Cbor.Tag as Tag
 import Dict.Any exposing (AnyDict)
+import Integer as I
 import Natural as N exposing (Natural)
 
 
@@ -388,3 +392,14 @@ decodeOutputDatum =
                     Nothing ->
                         D.fail
             )
+
+
+{-| [Data] encoder function for [OutputReference].
+-}
+outputReferenceToData : OutputReference -> Data
+outputReferenceToData outRef =
+    Data.Constr
+        N.zero
+        [ Data.Bytes <| Bytes.toAny outRef.transactionId
+        , Data.Int <| I.fromSafeInt outRef.outputIndex
+        ]
