@@ -93,7 +93,7 @@ hash script =
                 |> E.encode
                 |> Bytes.fromBytes
     in
-    blake2b224 Nothing (Bytes.toU8 <| Debug.log "SCRIPT ABOUT TO BE HASHED" taggedScriptBytes)
+    blake2b224 Nothing (Bytes.toU8 taggedScriptBytes)
         |> Bytes.fromU8
 
 

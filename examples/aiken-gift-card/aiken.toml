@@ -1,6 +1,6 @@
 name = "aiken-lang/aiken-gift-card"
 version = "0.0.0"
-compiler = "v1.1.7"
+compiler = "v1.1.9"
 plutus = "v3"
 license = "Apache-2.0"
 description = "Aiken contracts for project 'aiken-lang/aiken-gift-card'"
@@ -12,7 +12,7 @@ platform = "github"
 
 [[dependencies]]
 name = "aiken-lang/stdlib"
-version = "v2.1.0"
+version = "v2.2.0"
 source = "github"
 
 [config]

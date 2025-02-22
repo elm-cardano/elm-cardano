@@ -164,12 +164,12 @@ update msg model =
                     )
 
                 -- We just received the utxos, let’s ask for the main change address of the wallet
-                ( Ok (Cip30.ApiResponse { walletId } (Cip30.WalletUtxos utxos)), WalletLoading { wallet } ) ->
+                ( Ok (Cip30.ApiResponse _ (Cip30.WalletUtxos utxos)), WalletLoading { wallet } ) ->
                     ( WalletLoading { wallet = wallet, utxos = utxos }
                     , toWallet (Cip30.encodeRequest (Cip30.getChangeAddress wallet))
                     )
 
-                ( Ok (Cip30.ApiResponse { walletId } (Cip30.ChangeAddress address)), WalletLoading { wallet, utxos } ) ->
+                ( Ok (Cip30.ApiResponse _ (Cip30.ChangeAddress address)), WalletLoading { wallet, utxos } ) ->
                     ( WalletLoaded { wallet = wallet, utxos = Utxo.refDictFromList utxos, changeAddress = address } { errors = "" }
                     , Cmd.none
                     )
@@ -184,7 +184,7 @@ update msg model =
                     , toWallet (Cip30.encodeRequest (Cip30.submitTx ctx.loadedWallet.wallet signedTx))
                     )
 
-                ( Ok (Cip30.ApiResponse { walletId } (Cip30.SubmittedTx txId)), Submitting ({ loadedWallet } as ctx) action { tx } ) ->
+                ( Ok (Cip30.ApiResponse _ (Cip30.SubmittedTx txId)), Submitting ({ loadedWallet } as ctx) action { tx } ) ->
                     let
                         -- Update the known UTxOs set after the given Tx is processed
                         { updatedState, spent, created } =
@@ -220,7 +220,7 @@ update msg model =
                 _ ->
                     ( model, Cmd.none )
 
-        ( ConnectButtonClicked { id }, WalletDiscovered descriptors ) ->
+        ( ConnectButtonClicked { id }, WalletDiscovered _ ) ->
             ( model, toWallet (Cip30.encodeRequest (Cip30.enableWallet { id = id, extensions = [] })) )
 
         ( LoadBlueprintButtonClicked, WalletLoaded _ _ ) ->
@@ -325,6 +325,9 @@ update msg model =
         ( LockAdaButtonClicked, ParametersSet ctx _ ) ->
             lock ctx
 
+        ( LockAdaButtonClicked, TxSubmitted ctx _ _ ) ->
+            lock ctx
+
         ( UnlockAdaButtonClicked, TxSubmitted ctx _ { txId } ) ->
             let
                 intents =
@@ -355,7 +358,7 @@ update msg model =
 
 
 lock : AppContext -> ( Model, Cmd Msg )
-lock ({ scriptAddress, lockScript, pickedUtxo, tokenName } as ctx) =
+lock ({ loadedWallet, scriptAddress, lockScript, pickedUtxo, tokenName } as ctx) =
     let
         gift =
             Cardano.Value.onlyLovelace (Natural.fromSafeString "10000000")
@@ -363,10 +366,24 @@ lock ({ scriptAddress, lockScript, pickedUtxo, tokenName } as ctx) =
         ( mintIntent, mintValue ) =
             makeMintBurnIntent lockScript tokenName True
 
+        nftWithPickedUtxoChange =
+            Cardano.Value.sum
+                [ ctx.localStateUtxos
+                    |> Dict.Any.get pickedUtxo
+                    |> Maybe.map .amount
+                    |> Maybe.withDefault Cardano.Value.zero
+                , mintValue
+                ]
+
         -- Transaction locking 2 ada, plus the minted NFT at connected wallet's
         -- address, and locking 10 ada at the script address.
         intents =
             [ Spend (FromWalletUtxo pickedUtxo)
+            , Spend
+                (FromWallet
+                    loadedWallet.changeAddress
+                    gift
+                )
             , mintIntent
             , SendToOutput
                 { address = scriptAddress
@@ -376,17 +393,7 @@ lock ({ scriptAddress, lockScript, pickedUtxo, tokenName } as ctx) =
                 }
             , SendTo
                 ctx.loadedWallet.changeAddress
-                (Cardano.Value.sum
-                    [ Cardano.Value.substract
-                        (ctx.localStateUtxos
-                            |> Dict.Any.get pickedUtxo
-                            |> Maybe.map .amount
-                            |> Maybe.withDefault Cardano.Value.zero
-                        )
-                        gift
-                    , mintValue
-                    ]
-                )
+                nftWithPickedUtxoChange
             ]
     in
     intents |> finalizeTx ctx Nothing
@@ -529,18 +536,21 @@ view model =
         ParametersSet ctx { errors } ->
             div []
                 (viewLoadedWallet ctx.loadedWallet
-                    ++ [ div [] [ text <| "Picked UTxO: " ++ (ctx.pickedUtxo |> outputReferenceToData |> Debug.toString) ]
+                    ++ [ div [] [ text <| "Picked UTxO: " ++ (ctx.pickedUtxo |> (\u -> Bytes.toHex u.transactionId ++ "#" ++ String.fromInt u.outputIndex)) ]
                        , div [] [ text <| "Base16 (hex) formatted NFT token name: " ++ Bytes.toHex ctx.tokenName ]
                        , div [] [ text <| "Applied Script hash: " ++ Bytes.toHex ctx.lockScript.hash ]
-                       , div [ HA.style "max-width" "640px", HA.style "word-wrap" "break-word" ] [ text <| "Applied Script: " ++ Bytes.toHex ctx.lockScript.compiledCode ]
+                       , viewScriptCbor ctx.lockScript.compiledCode
                        , div [] [ text <| "Applied Script size (bytes): " ++ String.fromInt (Bytes.width ctx.lockScript.compiledCode) ]
                        , button [ onClick LockAdaButtonClicked ] [ text "Lock 10 ADA and mint gift card NFT" ]
                        , displayErrors errors
                        ]
                 )
 
-        Submitting _ _ _ ->
-            div [] [ text "Submitting transaction..." ]
+        Submitting ctx _ _ ->
+            div []
+                [ text "Submitting transaction..."
+                , viewScriptCbor ctx.lockScript.compiledCode
+                ]
 
         TxSubmitted { loadedWallet } action { txId, errors } ->
             let
@@ -596,3 +606,10 @@ viewAvailableWallets wallets =
             div [] [ walletIcon w, text (walletDescription w), connectButton w ]
     in
     div [] (List.map walletRow wallets)
+
+
+viewScriptCbor : Bytes ScriptCbor -> Html Msg
+viewScriptCbor compiledCode =
+    div
+        [ HA.style "max-width" "640px", HA.style "word-wrap" "break-word" ]
+        [ text <| "Applied Script: " ++ Bytes.toHex compiledCode ]
