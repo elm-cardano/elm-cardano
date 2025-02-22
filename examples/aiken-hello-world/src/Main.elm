@@ -6,7 +6,7 @@ import Cardano exposing (SpendSource(..), TxIntent(..), WitnessSource(..), dummy
 import Cardano.Address as Address exposing (Address, Credential(..), CredentialHash, NetworkId(..))
 import Cardano.Cip30 as Cip30
 import Cardano.Data as Data
-import Cardano.Script exposing (PlutusVersion(..), ScriptCbor)
+import Cardano.Script as Script exposing (PlutusVersion(..), ScriptCbor)
 import Cardano.Transaction as Tx exposing (Transaction)
 import Cardano.Utxo as Utxo exposing (DatumOption(..), Output, OutputReference, TransactionId)
 import Cardano.Value
@@ -203,7 +203,11 @@ update msg model =
         ( GotBlueprint result, WalletLoaded w _ ) ->
             case result of
                 Ok lockScript ->
-                    ( BlueprintLoaded w lockScript { errors = "" }, Cmd.none )
+                    let
+                        computedHash =
+                            Script.hash (Script.Plutus { version = Script.PlutusV3, script = lockScript.compiledCode })
+                    in
+                    ( BlueprintLoaded w (Debug.log (Bytes.toHex computedHash) lockScript) { errors = "" }, Cmd.none )
 
                 Err err ->
                     -- Handle error as needed

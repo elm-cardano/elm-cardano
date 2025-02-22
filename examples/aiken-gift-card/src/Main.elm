@@ -280,24 +280,20 @@ update msg model =
                                 }
                     in
                     case appliedScriptRes of
-                        Ok plutusScript ->
-                            let
-                                scriptHash =
-                                    Script.hash (Script.Plutus plutusScript)
-                            in
+                        Ok { plutusScript, hash } ->
                             ( ParametersSet
                                 { loadedWallet = w
                                 , pickedUtxo = headUtxo
                                 , tokenName = tokenNameBytes
                                 , localStateUtxos = w.utxos
                                 , lockScript =
-                                    { hash = scriptHash
+                                    { hash = hash
                                     , compiledCode = plutusScript.script
                                     }
                                 , scriptAddress =
                                     Address.Shelley
                                         { networkId = Testnet
-                                        , paymentCredential = ScriptHash scriptHash
+                                        , paymentCredential = ScriptHash hash
                                         , stakeCredential = Nothing
                                         }
                                 , costModels = FetchingCostModels
@@ -367,7 +363,7 @@ lock ({ scriptAddress, lockScript, pickedUtxo, tokenName } as ctx) =
         ( mintIntent, mintValue ) =
             makeMintBurnIntent lockScript tokenName True
 
-        -- Transaction locking 2 ada, plust the minted NFT at connected wallet's
+        -- Transaction locking 2 ada, plus the minted NFT at connected wallet's
         -- address, and locking 10 ada at the script address.
         intents =
             [ Spend (FromWalletUtxo pickedUtxo)
@@ -535,6 +531,7 @@ view model =
                 (viewLoadedWallet ctx.loadedWallet
                     ++ [ div [] [ text <| "Base16 (hex) formatted NFT token name: " ++ Bytes.toHex ctx.tokenName ]
                        , div [] [ text <| "Applied Script hash: " ++ Bytes.toHex ctx.lockScript.hash ]
+                       , div [ HA.style "max-width" "640px", HA.style "word-wrap" "break-word" ] [ text <| "Applied Script: " ++ Bytes.toHex ctx.lockScript.compiledCode ]
                        , div [] [ text <| "Applied Script size (bytes): " ++ String.fromInt (Bytes.width ctx.lockScript.compiledCode) ]
                        , button [ onClick LockAdaButtonClicked ] [ text "Lock 10 ADA and mint gift card NFT" ]
                        , displayErrors errors
