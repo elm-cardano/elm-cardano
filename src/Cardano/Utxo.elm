@@ -400,6 +400,6 @@ outputReferenceToData : OutputReference -> Data
 outputReferenceToData outRef =
     Data.Constr
         N.zero
-        [ Data.Bytes <| Bytes.toAny outRef.transactionId
+        [ Data.Constr N.zero [ Data.Bytes <| Bytes.toAny outRef.transactionId ]
         , Data.Int <| I.fromSafeInt outRef.outputIndex
         ]

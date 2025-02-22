@@ -3,14 +3,14 @@ port module Main exposing (..)
 import Browser
 import Bytes.Comparable as Bytes exposing (Bytes)
 import Bytes.Map as BytesMap
-import Cardano exposing (ScriptWitness(..), SpendSource(..), TxIntent(..), WitnessSource(..), dummyBytes)
+import Cardano exposing (ScriptWitness(..), SpendSource(..), TxIntent(..), WitnessSource(..))
 import Cardano.Address as Address exposing (Address, Credential(..), CredentialHash, NetworkId(..))
 import Cardano.Cip30 as Cip30
 import Cardano.CoinSelection as CoinSelection
 import Cardano.Data as Data
 import Cardano.Gov exposing (CostModels)
 import Cardano.MultiAsset exposing (AssetName)
-import Cardano.Script as Script exposing (PlutusVersion(..), ScriptCbor)
+import Cardano.Script exposing (PlutusVersion(..), ScriptCbor)
 import Cardano.Transaction as Tx exposing (Transaction)
 import Cardano.Uplc as Uplc
 import Cardano.Utxo as Utxo exposing (DatumOption(..), Output, OutputReference, TransactionId, outputReferenceToData)
@@ -529,7 +529,8 @@ view model =
         ParametersSet ctx { errors } ->
             div []
                 (viewLoadedWallet ctx.loadedWallet
-                    ++ [ div [] [ text <| "Base16 (hex) formatted NFT token name: " ++ Bytes.toHex ctx.tokenName ]
+                    ++ [ div [] [ text <| "Picked UTxO: " ++ (ctx.pickedUtxo |> outputReferenceToData |> Debug.toString) ]
+                       , div [] [ text <| "Base16 (hex) formatted NFT token name: " ++ Bytes.toHex ctx.tokenName ]
                        , div [] [ text <| "Applied Script hash: " ++ Bytes.toHex ctx.lockScript.hash ]
                        , div [ HA.style "max-width" "640px", HA.style "word-wrap" "break-word" ] [ text <| "Applied Script: " ++ Bytes.toHex ctx.lockScript.compiledCode ]
                        , div [] [ text <| "Applied Script size (bytes): " ++ String.fromInt (Bytes.width ctx.lockScript.compiledCode) ]
