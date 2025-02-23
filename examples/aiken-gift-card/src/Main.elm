@@ -130,6 +130,32 @@ getAppContext model =
             Nothing
 
 
+addError : String -> Model -> Model
+addError e model =
+    let
+        _ =
+            Debug.log "ERROR" e
+    in
+    case model of
+        WalletLoaded loadedWallet { errors } ->
+            WalletLoaded loadedWallet { errors = errors ++ ", " ++ e }
+
+        BlueprintLoaded loadedWallet unappliedScript { tokenName, errors } ->
+            BlueprintLoaded loadedWallet unappliedScript { tokenName = tokenName, errors = errors ++ ", " ++ e }
+
+        ParametersSet appContext { errors } ->
+            ParametersSet appContext { errors = errors ++ ", " ++ e }
+
+        Submitting appContext action { tx, errors } ->
+            Submitting appContext action { tx = tx, errors = errors ++ ", " ++ e }
+
+        TxSubmitted appContext action { txId, errors } ->
+            TxSubmitted appContext action { txId = txId, errors = errors ++ ", " ++ e }
+
+        _ ->
+            model
+
+
 
 -- #########################################################
 -- UPDATE
@@ -216,6 +242,9 @@ update msg model =
                     ( TxSubmitted updatedContext action { txId = txId, errors = "" }
                     , Cmd.none
                     )
+
+                ( Ok (Cip30.ApiError { info }), m ) ->
+                    ( addError info m, Cmd.none )
 
                 _ ->
                     ( model, Cmd.none )
@@ -322,6 +351,32 @@ update msg model =
                     , Cmd.none
                     )
 
+        ( GotProtocolParams (Ok pp), ParametersSet ctx errors ) ->
+            ( ParametersSet { ctx | costModels = CostModelsLoaded pp } errors, Cmd.none )
+
+        ( GotProtocolParams (Err err), ParametersSet ctx errors ) ->
+            let
+                setCostModelFailureFromMsg e =
+                    ParametersSet { ctx | costModels = CostModelsFailed e } errors
+            in
+            ( case err of
+                Http.BadUrl errMsg ->
+                    setCostModelFailureFromMsg ("Bad URL: " ++ errMsg)
+
+                Http.Timeout ->
+                    setCostModelFailureFromMsg "Request timeout"
+
+                Http.NetworkError ->
+                    setCostModelFailureFromMsg "Network error"
+
+                Http.BadStatus status ->
+                    setCostModelFailureFromMsg ("Bad status: " ++ String.fromInt status)
+
+                Http.BadBody errMsg ->
+                    setCostModelFailureFromMsg ("Bad body: " ++ errMsg)
+            , Cmd.none
+            )
+
         ( LockAdaButtonClicked, ParametersSet ctx _ ) ->
             lock ctx
 
@@ -349,6 +404,12 @@ update msg model =
                             (Cardano.Value.onlyToken ctx.lockScript.hash ctx.tokenName Natural.one)
                         )
                     , makeMintBurnIntent ctx.lockScript ctx.tokenName False |> Tuple.first
+                    , SendToOutput
+                        { address = ctx.loadedWallet.changeAddress
+                        , amount = gift
+                        , datumOption = Nothing
+                        , referenceScript = Nothing
+                        }
                     ]
             in
             intents |> finalizeTx ctx (Just txId)
@@ -357,12 +418,14 @@ update msg model =
             ( model, Cmd.none )
 
 
+gift : Cardano.Value.Value
+gift =
+    Cardano.Value.onlyLovelace (Natural.fromSafeString "10000000")
+
+
 lock : AppContext -> ( Model, Cmd Msg )
 lock ({ loadedWallet, scriptAddress, lockScript, pickedUtxo, tokenName } as ctx) =
     let
-        gift =
-            Cardano.Value.onlyLovelace (Natural.fromSafeString "10000000")
-
         ( mintIntent, mintValue ) =
             makeMintBurnIntent lockScript tokenName True
 
@@ -388,7 +451,7 @@ lock ({ loadedWallet, scriptAddress, lockScript, pickedUtxo, tokenName } as ctx)
             , SendToOutput
                 { address = scriptAddress
                 , amount = gift
-                , datumOption = Nothing
+                , datumOption = Just (DatumValue <| Data.Int Integer.zero)
                 , referenceScript = Nothing
                 }
             , SendTo
@@ -536,23 +599,25 @@ view model =
         ParametersSet ctx { errors } ->
             div []
                 (viewLoadedWallet ctx.loadedWallet
-                    ++ [ div [] [ text <| "Picked UTxO: " ++ (ctx.pickedUtxo |> (\u -> Bytes.toHex u.transactionId ++ "#" ++ String.fromInt u.outputIndex)) ]
-                       , div [] [ text <| "Base16 (hex) formatted NFT token name: " ++ Bytes.toHex ctx.tokenName ]
+                    ++ [ div [] [ text <| "☑️ Picked UTxO: " ++ (ctx.pickedUtxo |> (\u -> Bytes.toHex u.transactionId ++ "#" ++ String.fromInt u.outputIndex)) ]
+                       , div [] [ text <| "☑️ Base16 (hex) formatted NFT token name: " ++ Bytes.toHex ctx.tokenName ]
+                       , viewCostModels ctx.costModels
                        , div [] [ text <| "Applied Script hash: " ++ Bytes.toHex ctx.lockScript.hash ]
-                       , viewScriptCbor ctx.lockScript.compiledCode
                        , div [] [ text <| "Applied Script size (bytes): " ++ String.fromInt (Bytes.width ctx.lockScript.compiledCode) ]
+                       , viewScriptCbor ctx.lockScript.compiledCode
                        , button [ onClick LockAdaButtonClicked ] [ text "Lock 10 ADA and mint gift card NFT" ]
                        , displayErrors errors
                        ]
                 )
 
-        Submitting ctx _ _ ->
+        Submitting ctx _ { errors } ->
             div []
-                [ text "Submitting transaction..."
+                [ text "⌛ Submitting transaction..."
                 , viewScriptCbor ctx.lockScript.compiledCode
+                , displayErrors errors
                 ]
 
-        TxSubmitted { loadedWallet } action { txId, errors } ->
+        TxSubmitted { loadedWallet, lockScript } action { txId, errors } ->
             let
                 actionButton =
                     case action of
@@ -564,9 +629,10 @@ view model =
             in
             div []
                 (viewLoadedWallet loadedWallet
-                    ++ [ div [] [ text <| "Tx submitted! with ID: " ++ Bytes.toHex txId ]
-                       , actionButton
+                    ++ [ viewScriptCbor lockScript.compiledCode
                        , displayErrors errors
+                       , div [] [ Html.b [] [ text <| "🎉 Tx submitted! with ID: " ++ Bytes.toHex txId ] ]
+                       , actionButton
                        ]
                 )
 
@@ -577,7 +643,7 @@ displayErrors err =
         text ""
 
     else
-        div [] [ text <| "ERRORS: " ++ err ]
+        div [ HA.style "color" "red" ] [ Html.b [] [ text <| "ERRORS: " ], text err ]
 
 
 viewLoadedWallet : LoadedWallet -> List (Html msg)
@@ -608,8 +674,23 @@ viewAvailableWallets wallets =
     div [] (List.map walletRow wallets)
 
 
+viewCostModels : CostModelsState -> Html Msg
+viewCostModels cstMdls =
+    case cstMdls of
+        FetchingCostModels ->
+            div [] [ text "⌛ Fetching cost models..." ]
+
+        CostModelsFailed err ->
+            div [] [ text <| "❌ Failed to fetch cost models: " ++ err ]
+
+        CostModelsLoaded _ ->
+            div [] [ text "✅ Cost models loaded." ]
+
+
 viewScriptCbor : Bytes ScriptCbor -> Html Msg
 viewScriptCbor compiledCode =
     div
         [ HA.style "max-width" "640px", HA.style "word-wrap" "break-word" ]
-        [ text <| "Applied Script: " ++ Bytes.toHex compiledCode ]
+        [ text <| "Applied Script: "
+        , Html.small [] [ text <| Bytes.toHex compiledCode ]
+        ]
