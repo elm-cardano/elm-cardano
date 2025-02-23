@@ -4,10 +4,9 @@ module Cardano exposing
     , VoteIntent, ProposalIntent, ActionProposal(..)
     , TxOtherInfo(..)
     , Fee(..)
-    , finalize, finalizeAdvanced, TxFinalizationError(..)
+    , finalize, finalizeAdvanced, TxFinalized, TxFinalizationError(..)
     , GovernanceState, emptyGovernanceState
     , updateLocalState
-    , dummyBytes
     )
 
 {-| Cardano stuff
@@ -366,27 +365,27 @@ We can embed it directly in the transaction witness.
 @docs VoteIntent, ProposalIntent, ActionProposal
 @docs TxOtherInfo
 @docs Fee
-@docs finalize, finalizeAdvanced, TxFinalizationError
+@docs finalize, finalizeAdvanced, TxFinalized, TxFinalizationError
 @docs GovernanceState, emptyGovernanceState
 @docs updateLocalState
-@docs dummyBytes
 
 -}
 
-import Bytes as ElmBytes
 import Bytes.Comparable as Bytes exposing (Bytes)
 import Bytes.Map as Map exposing (BytesMap)
 import Cardano.Address as Address exposing (Address(..), Credential(..), CredentialHash, NetworkId(..), StakeAddress)
 import Cardano.AuxiliaryData as AuxiliaryData exposing (AuxiliaryData)
 import Cardano.CoinSelection as CoinSelection
 import Cardano.Data as Data exposing (Data)
-import Cardano.Gov as Gov exposing (Action, ActionId, Anchor, Constitution, CostModels, Drep(..), ProposalProcedure, ProtocolParamUpdate, ProtocolVersion, UnitInterval, Vote, Voter(..))
+import Cardano.Gov as Gov exposing (Action, ActionId, Anchor, Constitution, CostModels, Drep(..), ProposalProcedure, ProtocolParamUpdate, ProtocolVersion, Vote, Voter(..))
 import Cardano.Metadatum exposing (Metadatum)
 import Cardano.MultiAsset as MultiAsset exposing (AssetName, MultiAsset, PolicyId)
+import Cardano.Pool as Pool
 import Cardano.Redeemer as Redeemer exposing (Redeemer, RedeemerTag)
 import Cardano.Script as Script exposing (NativeScript, PlutusVersion(..), ScriptCbor)
-import Cardano.Transaction as Transaction exposing (Certificate(..), PoolId, PoolParams, Transaction, TransactionBody, VKeyWitness, WitnessSet)
+import Cardano.Transaction as Transaction exposing (Certificate(..), Transaction, TransactionBody, VKeyWitness, WitnessSet)
 import Cardano.Uplc as Uplc
+import Cardano.Utils exposing (UnitInterval)
 import Cardano.Utxo as Utxo exposing (Output, OutputReference, TransactionId)
 import Cardano.Value as Value exposing (Value)
 import Cbor.Encode as E
@@ -455,10 +454,10 @@ stake pool management, and voting or delegating your voting power.
 type CertificateIntent
     = RegisterStake { delegator : CredentialWitness, deposit : Natural }
     | UnregisterStake { delegator : CredentialWitness, refund : Natural }
-    | DelegateStake { delegator : CredentialWitness, poolId : Bytes PoolId }
+    | DelegateStake { delegator : CredentialWitness, poolId : Bytes Pool.Id }
       -- Pool management
-    | RegisterPool { deposit : Natural } PoolParams
-    | RetirePool { poolId : Bytes PoolId, epoch : Natural }
+    | RegisterPool { deposit : Natural } Pool.Params
+    | RetirePool { poolId : Bytes Pool.Id, epoch : Natural }
       -- Vote management
     | RegisterDrep { drep : CredentialWitness, deposit : Natural, info : Maybe Anchor }
     | UnregisterDrep { drep : CredentialWitness, refund : Natural }
@@ -619,6 +618,18 @@ defaultAutoFee =
     Natural.fromSafeInt 500000
 
 
+{-| Result of the Tx finalization.
+
+The hashes of the credentials expected to provide a signature
+are provided as an additional artifact of Tx finalization.
+
+-}
+type alias TxFinalized =
+    { tx : Transaction
+    , expectedSignatures : List (Bytes CredentialHash)
+    }
+
+
 {-| Errors that may happen during Tx finalization.
 -}
 type TxFinalizationError
@@ -636,7 +647,7 @@ type TxFinalizationError
     | FailurePleaseReportToElmCardano String
 
 
-{-| Finalize a transaction before signing and sending it.
+{-| Finalize a transaction before signing and submitting it.
 
 Analyze all intents and perform the following actions:
 
@@ -658,7 +669,7 @@ finalize :
     Utxo.RefDict Output
     -> List TxOtherInfo
     -> List TxIntent
-    -> Result TxFinalizationError Transaction
+    -> Result TxFinalizationError TxFinalized
 finalize localStateUtxos txOtherInfo txIntents =
     assertNoGovProposals txIntents
         |> Result.andThen (\_ -> guessFeeSource localStateUtxos txIntents)
@@ -961,7 +972,7 @@ emptyGovernanceState =
     }
 
 
-{-| Finalize a transaction before signing and sending it.
+{-| Finalize a transaction before signing and submitting it.
 
 Analyze all intents and perform the following actions:
 
@@ -981,7 +992,7 @@ finalizeAdvanced :
     -> Fee
     -> List TxOtherInfo
     -> List TxIntent
-    -> Result TxFinalizationError Transaction
+    -> Result TxFinalizationError TxFinalized
 finalizeAdvanced { govState, localStateUtxos, coinSelectionAlgo, evalScriptsCosts, costModels } fee txOtherInfo txIntents =
     case ( processIntents govState localStateUtxos txIntents, processOtherInfo txOtherInfo ) of
         ( Err err, _ ) ->
@@ -992,7 +1003,7 @@ finalizeAdvanced { govState, localStateUtxos, coinSelectionAlgo, evalScriptsCost
 
         ( Ok processedIntents, Ok processedOtherInfo ) ->
             let
-                buildTxRound : InputsOutputs -> Fee -> Result TxFinalizationError Transaction
+                buildTxRound : InputsOutputs -> Fee -> Result TxFinalizationError TxFinalized
                 buildTxRound roundInputsOutputs roundFees =
                     let
                         ( feeAmount, feeAddresses ) =
@@ -1076,17 +1087,27 @@ finalizeAdvanced { govState, localStateUtxos, coinSelectionAlgo, evalScriptsCost
             --   - adjust redeemers
             buildTxRound noInputsOutputs fee
                 --> Result String Transaction
-                |> Result.andThen (\tx -> buildTxRound (extractInputsOutputs tx) (adjustFees tx))
+                |> Result.andThen (\{ tx } -> buildTxRound (extractInputsOutputs tx) (adjustFees tx))
                 -- Evaluate plutus script cost
-                |> Result.andThen (adjustExecutionCosts <| evalScriptsCosts localStateUtxos)
+                |> Result.andThen (\{ tx } -> (adjustExecutionCosts <| evalScriptsCosts localStateUtxos) tx)
                 -- Redo a final round of above
                 |> Result.andThen (\tx -> buildTxRound (extractInputsOutputs tx) (adjustFees tx))
-                |> Result.andThen (adjustExecutionCosts <| evalScriptsCosts localStateUtxos)
-                -- Potentially replace the dummy auxiliary data hash and script data hash
-                |> Result.map replaceDummyAuxiliaryDataHash
-                |> Result.map (replaceDummyScriptDataHash costModels processedIntents)
-                -- Finally, check if final fees are correct
-                |> Result.andThen (\tx -> checkInsufficientFee { refScriptBytes = computeRefScriptBytesForTx tx } fee tx)
+                |> Result.andThen
+                    (\{ tx, expectedSignatures } ->
+                        (adjustExecutionCosts <| evalScriptsCosts localStateUtxos) tx
+                            -- Potentially replace the dummy auxiliary data hash and script data hash
+                            |> Result.map replaceDummyAuxiliaryDataHash
+                            |> Result.map (replaceDummyScriptDataHash costModels processedIntents)
+                            -- Finally, check if final fees are correct
+                            |> Result.andThen (\finalTx -> checkInsufficientFee { refScriptBytes = computeRefScriptBytesForTx finalTx } fee finalTx)
+                            -- Very finally, clean the placeholder vkey witnesses and append the expected vkey hashes
+                            |> Result.map
+                                (\finalTx ->
+                                    { tx = Transaction.updateSignatures (always Nothing) finalTx
+                                    , expectedSignatures = expectedSignatures
+                                    }
+                                )
+                    )
 
 
 {-| Helper function to update the auxiliary data hash.
@@ -1130,7 +1151,6 @@ replaceDummyScriptDataHash costModels intents ({ body } as tx) =
 Inputs are only counted once (even if present in both regular and reference inputs).
 But scripts duplicates in different inputs are counted multiple times.
 Both native and Plutus scripts are counted.
-One issue here is I don’t think we still have the original bytes representation of these.
 
 The rule is detailed in that document:
 <https://github.com/IntersectMBO/cardano-ledger/blob/master/docs/adr/2024-08-14_009-refscripts-fee-change.md#reference-scripts-total-size>
@@ -1148,7 +1168,7 @@ computeRefScriptBytes localStateUtxos references =
                     |> Maybe.andThen .referenceScript
             )
         -- extract reference script bytes size
-        |> List.map (\script -> ElmBytes.width <| E.encode (Script.toCbor script))
+        |> List.map (\scriptRef -> Bytes.width (Script.refBytes scriptRef))
         |> List.sum
 
 
@@ -2160,7 +2180,7 @@ buildTx :
     -> ProcessedIntents
     -> ProcessedOtherInfo
     -> InputsOutputs
-    -> Transaction
+    -> TxFinalized
 buildTx localStateUtxos feeAmount collateralSelection processedIntents otherInfo inputsOutputs =
     let
         -- WitnessSet ######################################
@@ -2302,34 +2322,48 @@ buildTx localStateUtxos feeAmount collateralSelection processedIntents otherInfo
         votesCreds =
             List.filterMap (Tuple.first >> Gov.voterKeyCred) sortedVotes
 
+        -- Find all the hashes of credentials expected to provide a signature
+        allExpectedSignatures : List (Bytes CredentialHash)
+        allExpectedSignatures =
+            [ processedIntents.requiredSigners
+            , processedIntents.expectedSigners
+            , walletCredsInInputs
+            , withdrawalsStakeCreds
+            , certificatesCreds
+            , votesCreds
+            ]
+                |> List.concat
+                |> List.map (\cred -> ( cred, {} ))
+                |> Map.fromList
+                |> Map.keys
+
         -- Create a dummy VKey Witness for each input wallet address or required signer
         -- so that fees are correctly estimated.
-        dummyVKeyWitness : List VKeyWitness
-        dummyVKeyWitness =
-            (processedIntents.requiredSigners
-                ++ processedIntents.expectedSigners
-                ++ walletCredsInInputs
-                ++ withdrawalsStakeCreds
-                ++ certificatesCreds
-                ++ votesCreds
-            )
+        placeholderVKeyWitness : List VKeyWitness
+        placeholderVKeyWitness =
+            allExpectedSignatures
                 |> List.map
                     (\cred ->
+                        -- Try keeping the 28 bytes of the credential hash at the start if it’s an actual cred
+                        -- or prefix with VKEY and SIGNATURE for fake creds in textual shape (used in tests).
                         let
-                            credAsText =
-                                Bytes.toText cred
-                                    |> Maybe.withDefault (Bytes.toHex cred)
-                                    |> String.left 28
+                            credStr =
+                                Bytes.pretty cred
                         in
-                        ( cred, { vkey = dummyBytes 32 ("VKEY" ++ credAsText), signature = dummyBytes 64 ("SIGNATURE" ++ credAsText) } )
+                        if credStr == Bytes.toHex cred then
+                            { vkey = Bytes.dummyWithPrefix 32 cred
+                            , signature = Bytes.dummyWithPrefix 64 cred
+                            }
+
+                        else
+                            { vkey = Bytes.dummy 32 <| "VKEY" ++ credStr
+                            , signature = Bytes.dummy 64 <| "SIGNATURE" ++ credStr
+                            }
                     )
-                -- Convert to a BytesMap to ensure credentials unicity
-                |> Map.fromList
-                |> Map.values
 
         txWitnessSet : WitnessSet
         txWitnessSet =
-            { vkeywitness = nothingIfEmptyList dummyVKeyWitness
+            { vkeywitness = nothingIfEmptyList placeholderVKeyWitness
             , bootstrapWitness = Nothing
             , plutusData = nothingIfEmptyList datumWitnessValues
             , nativeScripts = nothingIfEmptyList nativeScripts
@@ -2409,7 +2443,7 @@ buildTx localStateUtxos feeAmount collateralSelection processedIntents otherInfo
                     Nothing
 
                 else
-                    Just (dummyBytes 32 "AuxDataHash")
+                    Just (Bytes.dummy 32 "AuxDataHash")
             , validityIntervalStart = Maybe.map .start otherInfo.timeValidityRange
             , mint = processedIntents.totalMinted
             , scriptDataHash =
@@ -2417,7 +2451,7 @@ buildTx localStateUtxos feeAmount collateralSelection processedIntents otherInfo
                     Nothing
 
                 else
-                    Just (dummyBytes 32 "ScriptDataHash")
+                    Just (Bytes.dummy 32 "ScriptDataHash")
             , collateral = List.map Tuple.first collateralSelection.selectedUtxos
             , requiredSigners = processedIntents.requiredSigners
             , networkId = Nothing -- not mandatory
@@ -2432,10 +2466,13 @@ buildTx localStateUtxos feeAmount collateralSelection processedIntents otherInfo
             , treasuryDonation = Nothing -- TODO treasuryDonation
             }
     in
-    { body = txBody
-    , witnessSet = txWitnessSet
-    , isValid = True
-    , auxiliaryData = txAuxData
+    { tx =
+        { body = txBody
+        , witnessSet = txWitnessSet
+        , isValid = True
+        , auxiliaryData = txAuxData
+        }
+    , expectedSignatures = allExpectedSignatures
     }
 
 
@@ -2449,10 +2486,10 @@ extractCertificateCred cert =
             []
 
         StakeDeregistrationCert { delegator } ->
-            [ Address.extractCredentialHash delegator ]
+            List.filterMap identity [ Address.extractCredentialKeyHash delegator ]
 
         StakeDelegationCert { delegator } ->
-            [ Address.extractCredentialHash delegator ]
+            List.filterMap identity [ Address.extractCredentialKeyHash delegator ]
 
         PoolRegistrationCert { operator, poolOwners } ->
             operator :: poolOwners
@@ -2469,25 +2506,25 @@ extractCertificateCred cert =
             []
 
         RegCert { delegator } ->
-            [ Address.extractCredentialHash delegator ]
+            List.filterMap identity [ Address.extractCredentialKeyHash delegator ]
 
         UnregCert { delegator } ->
-            [ Address.extractCredentialHash delegator ]
+            List.filterMap identity [ Address.extractCredentialKeyHash delegator ]
 
         VoteDelegCert { delegator } ->
-            [ Address.extractCredentialHash delegator ]
+            List.filterMap identity [ Address.extractCredentialKeyHash delegator ]
 
         StakeVoteDelegCert { delegator } ->
-            [ Address.extractCredentialHash delegator ]
+            List.filterMap identity [ Address.extractCredentialKeyHash delegator ]
 
         StakeRegDelegCert { delegator } ->
-            [ Address.extractCredentialHash delegator ]
+            List.filterMap identity [ Address.extractCredentialKeyHash delegator ]
 
         VoteRegDelegCert { delegator } ->
-            [ Address.extractCredentialHash delegator ]
+            List.filterMap identity [ Address.extractCredentialKeyHash delegator ]
 
         StakeVoteRegDelegCert { delegator } ->
-            [ Address.extractCredentialHash delegator ]
+            List.filterMap identity [ Address.extractCredentialKeyHash delegator ]
 
         AuthCommitteeHotCert _ ->
             Debug.todo "How many signatures for AuthCommitteeHotCert?"
@@ -2496,13 +2533,13 @@ extractCertificateCred cert =
             Debug.todo "How many signatures for ResignCommitteeColdCert?"
 
         RegDrepCert { drepCredential } ->
-            [ Address.extractCredentialHash drepCredential ]
+            List.filterMap identity [ Address.extractCredentialKeyHash drepCredential ]
 
         UnregDrepCert { drepCredential } ->
-            [ Address.extractCredentialHash drepCredential ]
+            List.filterMap identity [ Address.extractCredentialKeyHash drepCredential ]
 
         UpdateDrepCert { drepCredential } ->
-            [ Address.extractCredentialHash drepCredential ]
+            List.filterMap identity [ Address.extractCredentialKeyHash drepCredential ]
 
 
 {-| Update the known local state with the spent and created UTxOs of a given transaction.
@@ -2529,18 +2566,6 @@ updateLocalState txId tx oldState =
     , spent = List.filterMap (\ref -> Dict.Any.get ref oldState |> Maybe.map (Tuple.pair ref)) tx.body.inputs
     , created = createdUtxos
     }
-
-
-{-| Unsafe helper function to make up some bytes of a given length,
-starting by the given text when decoded as text.
--}
-dummyBytes : Int -> String -> Bytes a
-dummyBytes length prefix =
-    let
-        zeroSuffix =
-            String.repeat (length - String.length prefix) "0"
-    in
-    Bytes.fromText (prefix ++ zeroSuffix)
 
 
 witnessSourceToResult : WitnessSource a -> Result a OutputReference

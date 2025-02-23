@@ -1,15 +1,16 @@
 module Cardano.Gov exposing
-    ( Drep(..), decodeDrep, encodeDrep
+    ( Id(..), idFromBech32, idToBech32
+    , Drep(..), decodeDrep, encodeDrep
     , ProposalProcedure, proposalProcedureFromCbor
     , Action(..), decodeAction, encodeAction
-    , ActionId, actionIdFromCbor, encodeActionId
+    , ActionId, actionIdToString, actionIdFromCbor, encodeActionId
     , Constitution, decodeConstitution, encodeConstitution
     , ProtocolParamUpdate, noParamUpdate, decodeProtocolParamUpdate, encodeProtocolParamUpdate
     , PoolVotingThresholds, decodePoolVotingThresholds, encodePoolVotingThresholds
     , DrepVotingThresholds, decodeDrepVotingThresholds, encodeDrepVotingThresholds
     , CostModels, decodeCostModels, encodeCostModels
     , ProtocolVersion, decodeProtocolVersion, encodeProtocolVersion
-    , Nonce(..), UnitInterval, PositiveInterval
+    , Nonce(..)
     , VotingProcedure, votingProcedureFromCbor, encodeVotingProcedure
     , Vote(..), encodeVote
     , Voter(..), VoterDict, emptyVoterDict, voterDictFromList, voterCredentialHash, voterKeyCred, voterLedgerOrder, voterFromCbor, encodeVoter
@@ -18,13 +19,15 @@ module Cardano.Gov exposing
 
 {-| Handling gov-related stuff.
 
+@docs Id, idFromBech32, idToBech32
+
 @docs Drep, decodeDrep, encodeDrep
 
 @docs ProposalProcedure, proposalProcedureFromCbor
 
 @docs Action, decodeAction, encodeAction
 
-@docs ActionId, actionIdFromCbor, encodeActionId
+@docs ActionId, actionIdToString, actionIdFromCbor, encodeActionId
 
 @docs Constitution, decodeConstitution, encodeConstitution
 
@@ -38,7 +41,7 @@ module Cardano.Gov exposing
 
 @docs ProtocolVersion, decodeProtocolVersion, encodeProtocolVersion
 
-@docs Nonce, UnitInterval, PositiveInterval
+@docs Nonce
 
 @docs VotingProcedure, votingProcedureFromCbor, encodeVotingProcedure
 
@@ -50,18 +53,130 @@ module Cardano.Gov exposing
 
 -}
 
+import Bech32.Decode as Bech32
+import Bech32.Encode as Bech32
 import Bytes.Comparable as Bytes exposing (Any, Bytes)
 import Cardano.Address as Address exposing (Credential(..), CredentialHash, StakeAddress, extractCredentialHash)
 import Cardano.MultiAsset exposing (PolicyId)
+import Cardano.Pool as Pool
 import Cardano.Redeemer as Redeemer exposing (ExUnitPrices, ExUnits, decodeExUnitPrices, encodeExUnitPrices)
-import Cardano.Utils exposing (RationalNumber, decodeRational, encodeRationalNumber)
+import Cardano.Utils exposing (RationalNumber, UnitInterval, decodeRational, encodeRationalNumber)
 import Cardano.Utxo exposing (TransactionId)
 import Cbor.Decode as D
 import Cbor.Decode.Extra as D
 import Cbor.Encode as E
 import Cbor.Encode.Extra as EE
 import Dict.Any exposing (AnyDict)
+import List.Extra
 import Natural exposing (Natural)
+
+
+{-| Governance Id related to [CIP 129](https://github.com/cardano-foundation/CIPs/blob/master/CIP-0129/README.md).
+In addition to CC and DRep, this also includes SPOs as potential governance Ids!
+-}
+type Id
+    = CcHotCredId Credential
+    | CcColdCredId Credential
+    | DrepId Credential
+    | PoolId (Bytes Pool.Id)
+    | GovActionId ActionId
+
+
+{-| Convert a Gov Id from its Bech32 governance Id (CIP 129) or Pool Id (CIP 5).
+
+Remark: will fail if a gov action index is >= 256 since we make the simplifying assumption it’s only 1 byte long.
+
+-}
+idFromBech32 : String -> Maybe Id
+idFromBech32 str =
+    case Pool.fromBech32 str of
+        Just id ->
+            Just <| PoolId id
+
+        Nothing ->
+            case Bech32.decode str of
+                Err _ ->
+                    Nothing
+
+                Ok { prefix, data } ->
+                    let
+                        dataU8 =
+                            Bytes.toU8 (Bytes.fromBytes data)
+                    in
+                    case ( prefix, dataU8 ) of
+                        ( "cc_hot", 2 :: bytesU8 ) ->
+                            Just <| CcHotCredId <| VKeyHash <| Bytes.fromU8 bytesU8
+
+                        ( "cc_hot", 3 :: bytesU8 ) ->
+                            Just <| CcHotCredId <| ScriptHash <| Bytes.fromU8 bytesU8
+
+                        ( "cc_cold", 18 :: bytesU8 ) ->
+                            Just <| CcColdCredId <| VKeyHash <| Bytes.fromU8 bytesU8
+
+                        ( "cc_cold", 19 :: bytesU8 ) ->
+                            Just <| CcColdCredId <| ScriptHash <| Bytes.fromU8 bytesU8
+
+                        ( "drep", 34 :: bytesU8 ) ->
+                            Just <| DrepId <| VKeyHash <| Bytes.fromU8 bytesU8
+
+                        ( "drep", 35 :: bytesU8 ) ->
+                            Just <| DrepId <| ScriptHash <| Bytes.fromU8 bytesU8
+
+                        ( "gov_action", _ ) ->
+                            case List.Extra.splitAt 32 dataU8 of
+                                ( txIdU8, [ index ] ) ->
+                                    Just <|
+                                        GovActionId
+                                            { transactionId = Bytes.fromU8 txIdU8
+                                            , govActionIndex = index
+                                            }
+
+                                _ ->
+                                    Nothing
+
+                        _ ->
+                            Nothing
+
+
+{-| Convert a Gov Id from its Bech32 governance Id (CIP 129) or Pool Id (CIP 5).
+
+Remark: will be wrong if a gov action index is >= 256 since we make the simplifying assumption it’s only 1 byte long.
+
+-}
+idToBech32 : Id -> String
+idToBech32 id =
+    case id of
+        CcHotCredId (VKeyHash bytes) ->
+            Bech32.encode { prefix = "cc_hot", data = Bytes.toBytes <| Bytes.fromU8 <| (2 :: Bytes.toU8 bytes) }
+                |> Result.withDefault "cc_hot"
+
+        CcHotCredId (ScriptHash bytes) ->
+            Bech32.encode { prefix = "cc_hot", data = Bytes.toBytes <| Bytes.fromU8 <| (3 :: Bytes.toU8 bytes) }
+                |> Result.withDefault "cc_hot"
+
+        CcColdCredId (VKeyHash bytes) ->
+            Bech32.encode { prefix = "cc_cold", data = Bytes.toBytes <| Bytes.fromU8 <| (18 :: Bytes.toU8 bytes) }
+                |> Result.withDefault "cc_cold"
+
+        CcColdCredId (ScriptHash bytes) ->
+            Bech32.encode { prefix = "cc_cold", data = Bytes.toBytes <| Bytes.fromU8 <| (19 :: Bytes.toU8 bytes) }
+                |> Result.withDefault "cc_cold"
+
+        DrepId (VKeyHash bytes) ->
+            Bech32.encode { prefix = "drep", data = Bytes.toBytes <| Bytes.fromU8 <| (34 :: Bytes.toU8 bytes) }
+                |> Result.withDefault "drep"
+
+        DrepId (ScriptHash bytes) ->
+            Bech32.encode { prefix = "drep", data = Bytes.toBytes <| Bytes.fromU8 <| (35 :: Bytes.toU8 bytes) }
+                |> Result.withDefault "drep"
+
+        PoolId poolId ->
+            Bech32.encode { prefix = "pool", data = Bytes.toBytes poolId }
+                |> Result.withDefault "pool"
+
+        GovActionId actionId ->
+            Bech32.encode { prefix = "gov_action", data = Bytes.toBytes <| Bytes.fromU8 <| Bytes.toU8 actionId.transactionId ++ [ actionId.govActionIndex ] }
+                |> Result.withDefault "gov_action"
 
 
 {-| Delegate representative.
@@ -318,6 +433,15 @@ type alias ActionId =
     { transactionId : Bytes TransactionId
     , govActionIndex : Int
     }
+
+
+{-| Convert [ActionId] into its Hex string.
+-}
+actionIdToString : ActionId -> String
+actionIdToString { transactionId, govActionIndex } =
+    Bytes.toHex transactionId
+        ++ "#"
+        ++ String.fromInt govActionIndex
 
 
 {-| Decoder for ActionId type.
@@ -692,18 +816,6 @@ type Nonce
 -}
 type alias ProtocolVersion =
     ( Int, Int )
-
-
-{-| Represents a unit interval (0 to 1).
--}
-type alias UnitInterval =
-    RationalNumber
-
-
-{-| Represents a positive interval (> 0).
--}
-type alias PositiveInterval =
-    RationalNumber
 
 
 

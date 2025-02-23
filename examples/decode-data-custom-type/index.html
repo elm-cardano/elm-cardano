@@ -1,0 +1,27 @@
+<html>
+    <head>
+        <meta charset="UTF-8" />
+        <title>elm-cardano</title>
+    </head>
+
+    <body>
+        <div id="myapp"></div>
+        <script type="module">
+            import * as ElmCardano from "./elm-cardano.js";
+            // Load the Main.elm compiled file
+            await ElmCardano.loadMain("./main.js");
+            // Initialize the Elm app
+            var app = Elm.Main.init({
+                node: document.getElementById("myapp"),
+                flags: null,
+            });
+            // Initialize default ports for the app
+            ElmCardano.init({
+                portFromElmToWallet: null, // app.ports.toWallet,
+                portFromWalletToElm: null, // app.ports.fromWallet,
+                portFromElmToOgmios: null, // app.ports.toOgmios,
+                portFromOgmiosToElm: null, // app.ports.fromOgmios,
+            });
+        </script>
+    </body>
+</html>

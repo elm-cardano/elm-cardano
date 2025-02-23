@@ -2,7 +2,7 @@ port module Main exposing (..)
 
 import Browser
 import Bytes.Comparable as Bytes exposing (Bytes)
-import Cardano exposing (SpendSource(..), TxIntent(..), WitnessSource(..), dummyBytes)
+import Cardano exposing (SpendSource(..), TxIntent(..), WitnessSource(..))
 import Cardano.Address as Address exposing (Address, Credential(..), CredentialHash, NetworkId(..))
 import Cardano.Cip30 as Cip30
 import Cardano.Data as Data
@@ -218,7 +218,7 @@ update msg model =
                 -- Extract both parts (payment/stake) from our wallet address
                 ( myKeyCred, myStakeCred ) =
                     ( Address.extractPubKeyHash w.changeAddress
-                        |> Maybe.withDefault (dummyBytes 28 "ERROR")
+                        |> Maybe.withDefault (Bytes.dummy 28 "ERROR")
                     , Address.extractStakeCredential w.changeAddress
                     )
 
@@ -268,13 +268,9 @@ update msg model =
                         |> Cardano.finalize ctx.localStateUtxos []
             in
             case unlockTxAttempt of
-                Ok unlockTx ->
-                    let
-                        cleanTx =
-                            Tx.updateSignatures (\_ -> Nothing) unlockTx
-                    in
-                    ( Submitting ctx Unlocking { tx = cleanTx, errors = "" }
-                    , toWallet (Cip30.encodeRequest (Cip30.signTx ctx.loadedWallet.wallet { partialSign = False } cleanTx))
+                Ok { tx } ->
+                    ( Submitting ctx Unlocking { tx = tx, errors = "" }
+                    , toWallet (Cip30.encodeRequest (Cip30.signTx ctx.loadedWallet.wallet { partialSign = False } tx))
                     )
 
                 Err err ->
@@ -311,13 +307,9 @@ lock ({ localStateUtxos, myKeyCred, myStakeCred, scriptAddress, loadedWallet, lo
                 |> Cardano.finalize localStateUtxos []
     in
     case lockTxAttempt of
-        Ok lockTx ->
-            let
-                cleanTx =
-                    Tx.updateSignatures (\_ -> Nothing) lockTx
-            in
-            ( Submitting ctx Locking { tx = cleanTx, errors = "" }
-            , toWallet (Cip30.encodeRequest (Cip30.signTx loadedWallet.wallet { partialSign = False } cleanTx))
+        Ok { tx } ->
+            ( Submitting ctx Locking { tx = tx, errors = "" }
+            , toWallet (Cip30.encodeRequest (Cip30.signTx loadedWallet.wallet { partialSign = False } tx))
             )
 
         Err err ->

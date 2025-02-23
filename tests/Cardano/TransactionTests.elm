@@ -6,6 +6,7 @@ import Cardano.Address as Address exposing (NetworkId(..))
 import Cardano.AuxiliaryData exposing (AuxiliaryData)
 import Cardano.Gov exposing (Nonce(..), noParamUpdate)
 import Cardano.Metadatum as Metadatum
+import Cardano.Pool as Pool
 import Cardano.Script exposing (NativeScript(..))
 import Cardano.Transaction as Transaction exposing (TransactionBody, WitnessSet, newBody, newWitnessSet)
 import Cardano.Value as Value
@@ -383,7 +384,7 @@ txBody841cca81 =
                     }
                 , poolOwners = [ Bytes.fromHexUnchecked "0e5b086df87a2a0c5c398b41d413f84176c527da5e5cb641f4598844" ]
                 , relays =
-                    [ Transaction.SingleHostAddr
+                    [ Pool.SingleHostAddr
                         { ipv4 = Just (Bytes.fromHexUnchecked "36dc1428")
                         , ipv6 = Nothing
                         , port_ = Just 3002
@@ -545,7 +546,7 @@ txBody3dd8be52 =
                 , pledge = N.fromSafeString "1200000000000000000"
                 , poolMetadata = Just { poolMetadataHash = Bytes.fromHexUnchecked "d6bed5fb3aea9ce8b2829859704728ef2987da4b2be7ce07607799a3485ed949", url = "https://unitedstakesofcardano.io/usa01.metadata.json" }
                 , poolOwners = [ Bytes.fromHexUnchecked "09799da84e15b9a32da2bb284586f32fe357afdccecd2fcb8f88dbb5", Bytes.fromHexUnchecked "88fdf9622c4619c0109132410e76c272013ef07f786e8f2cc2437960", Bytes.fromHexUnchecked "d1290c017327065ac2279e989735990efac7539823eab4370efde323" ]
-                , relays = [ Transaction.SingleHostAddr { ipv4 = Just (Bytes.fromHexUnchecked "33514501"), ipv6 = Nothing, port_ = Just 5417 }, Transaction.SingleHostAddr { ipv4 = Just (Bytes.fromHexUnchecked "33514502"), ipv6 = Nothing, port_ = Just 5417 } ]
+                , relays = [ Pool.SingleHostAddr { ipv4 = Just (Bytes.fromHexUnchecked "33514501"), ipv6 = Nothing, port_ = Just 5417 }, Pool.SingleHostAddr { ipv4 = Just (Bytes.fromHexUnchecked "33514502"), ipv6 = Nothing, port_ = Just 5417 } ]
                 , rewardAccount = { networkId = Mainnet, stakeCredential = Address.VKeyHash (Bytes.fromHexUnchecked "bc000424731d5cfdb41da8bbb2e8bfbdcf05becd055a3f831a0ccdfa") }
                 , vrfKeyHash = Bytes.fromHexUnchecked "8655a2c115f703f5ffe2eeed634e7f0347c73c90ffcc359d2df7940d52657938"
                 }

@@ -1,13 +1,14 @@
 module Cardano.Address exposing
     ( Address(..), StakeAddress, NetworkId(..), ByronAddress
     , Credential(..), StakeCredential(..), StakeCredentialPointer, CredentialHash
-    , fromBech32, fromBytes, enterprise, script, base, pointer
-    , isShelleyWallet, extractCredentialHash, extractCredentialKeyHash, extractPubKeyHash, extractStakeCredential, extractStakeKeyHash
+    , fromString, fromBech32, fromBytes
+    , enterprise, script, base, pointer
+    , isShelleyWallet, extractNetworkId, extractCredentialHash, extractCredentialKeyHash, extractPubKeyHash, extractStakeCredential, extractStakeKeyHash
     , setShelleyStakeCred
     , Dict, emptyDict, dictFromList
     , StakeDict, emptyStakeDict, stakeDictFromList
     , networkIdFromInt
-    , toBytes, stakeAddressToBytes
+    , toBech32, toBytes, stakeAddressToBytes
     , toCbor, stakeAddressToCbor, credentialToCbor, encodeNetworkId
     , decode, decodeReward, decodeCredential
     )
@@ -18,9 +19,11 @@ module Cardano.Address exposing
 
 @docs Credential, StakeCredential, StakeCredentialPointer, CredentialHash
 
-@docs fromBech32, fromBytes, enterprise, script, base, pointer
+@docs fromString, fromBech32, fromBytes
 
-@docs isShelleyWallet, extractCredentialHash, extractCredentialKeyHash, extractPubKeyHash, extractStakeCredential, extractStakeKeyHash
+@docs enterprise, script, base, pointer
+
+@docs isShelleyWallet, extractNetworkId, extractCredentialHash, extractCredentialKeyHash, extractPubKeyHash, extractStakeCredential, extractStakeKeyHash
 
 @docs setShelleyStakeCred
 
@@ -30,7 +33,7 @@ module Cardano.Address exposing
 
 @docs networkIdFromInt
 
-@docs toBytes, stakeAddressToBytes
+@docs toBech32, toBytes, stakeAddressToBytes
 
 @docs toCbor, stakeAddressToCbor, credentialToCbor, encodeNetworkId
 
@@ -38,6 +41,8 @@ module Cardano.Address exposing
 
 -}
 
+import Bech32.Decode as Bech32
+import Bech32.Encode as Bech32
 import Bitwise
 import Bytes as B
 import Bytes.Comparable as Bytes exposing (Bytes)
@@ -69,6 +74,21 @@ type alias StakeAddress =
 type NetworkId
     = Testnet -- 0
     | Mainnet -- 1
+
+
+{-| Extract the network ID from an address. Return [Nothing] for a Byron address.
+-}
+extractNetworkId : Address -> Maybe NetworkId
+extractNetworkId address =
+    case address of
+        Byron _ ->
+            Nothing
+
+        Shelley { networkId } ->
+            Just networkId
+
+        Reward { networkId } ->
+            Just networkId
 
 
 {-| Phantom type for Byron addresses.
@@ -132,11 +152,69 @@ type CredentialHash
     = CredentialHash Never
 
 
-{-| Build an [Address] from its Bech32 string representation.
+{-| Build an [Address] from any valid string representation, such as Hex or Bech32.
+-}
+fromString : String -> Maybe Address
+fromString str =
+    case fromBech32 str of
+        Just addr ->
+            Just addr
+
+        Nothing ->
+            Bytes.fromHex str
+                |> Maybe.andThen fromBytes
+
+
+{-| Build an [Address] from its Bech32 string representation (CIP 5).
 -}
 fromBech32 : String -> Maybe Address
-fromBech32 _ =
-    Debug.todo "fromBech32"
+fromBech32 str =
+    case Bech32.decode str of
+        Err _ ->
+            Nothing
+
+        Ok { prefix, data } ->
+            if List.member prefix [ "byron", "addr", "addr_test", "stake", "stake_test" ] then
+                BD.decode (decodeBytes data) data
+
+            else
+                Nothing
+
+
+{-| Convert an [Address] into its Bech32 string representation (CIP 5).
+-}
+toBech32 : Address -> String
+toBech32 address =
+    case address of
+        Byron _ ->
+            Bech32.encode { prefix = "byron", data = toBytes address |> Bytes.toBytes }
+                |> Result.withDefault "byron"
+
+        Shelley { networkId } ->
+            Bech32.encode
+                { prefix =
+                    case networkId of
+                        Mainnet ->
+                            "addr"
+
+                        Testnet ->
+                            "addr_test"
+                , data = toBytes address |> Bytes.toBytes
+                }
+                |> Result.withDefault "addr"
+
+        Reward { networkId } ->
+            Bech32.encode
+                { prefix =
+                    case networkId of
+                        Mainnet ->
+                            "stake"
+
+                        Testnet ->
+                            "stake_test"
+                , data = toBytes address |> Bytes.toBytes
+                }
+                |> Result.withDefault "stake"
 
 
 {-| Create a simple enterprise address, with only a payment credential and no stake credential.

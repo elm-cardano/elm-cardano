@@ -1,27 +1,19 @@
-module List.Extra exposing (chunksOf, get64, indexedMap64, last, sublist, take64, updateAt)
+module List.ExtraBis exposing (chunksOf, get64, indexedMap64, sublist, take64)
 
+import List.Extra exposing (getAt)
 import UInt64 as U64 exposing (UInt64)
 
 
 chunksOf : Int -> List a -> List (List a)
-chunksOf size list =
-    if List.isEmpty list then
-        []
-
-    else
-        List.take size list :: chunksOf size (List.drop size list)
-
-
-get : Int -> List a -> Maybe a
-get n =
-    List.drop n >> List.head
+chunksOf =
+    List.Extra.greedyGroupsOf
 
 
 get64 : UInt64 -> List a -> Maybe a
 get64 u64 list =
     case U64.toInt31 u64 of
         Just u31 ->
-            get u31 list
+            getAt u31 list
 
         Nothing ->
             let
@@ -31,8 +23,8 @@ get64 u64 list =
                 chunked =
                     chunksOf 0xFFFFFFFF list
             in
-            get iMS chunked
-                |> Maybe.andThen (get iLS)
+            getAt iMS chunked
+                |> Maybe.andThen (getAt iLS)
 
 
 take64 : UInt64 -> List a -> List a
@@ -63,28 +55,6 @@ indexedMap64 fn list =
         |> Tuple.first
 
 
-updateAt : Int -> (a -> a) -> List a -> List a
-updateAt i fn =
-    List.indexedMap
-        (\j x ->
-            if j == i then
-                fn x
-
-            else
-                x
-        )
-
-
 sublist : Int -> Int -> List a -> List a
 sublist start length =
     List.drop start >> List.take length
-
-
-last : List a -> Maybe a
-last list =
-    case List.drop (List.length list - 1) list of
-        [] ->
-            Nothing
-
-        x :: _ ->
-            Just x

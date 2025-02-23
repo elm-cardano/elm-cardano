@@ -1,6 +1,5 @@
 module Cardano.Hashes exposing (suite)
 
-import Blake2b exposing (blake2b256)
 import Bytes.Comparable as Bytes
 import Cardano.AuxiliaryData as AuxiliaryData exposing (AuxiliaryData)
 import Cardano.Metadatum as Metadatum
@@ -20,8 +19,8 @@ suite =
                         Cbor.Encode.encode (AuxiliaryData.toCbor auxiliaryData8a8f8dfe)
                             |> Bytes.fromBytes
                 in
-                strToBytes "36663d429bded43331a968fcaa3a0aba03d6d83474176b8c85a019b0b408ff8d"
-                    |> Expect.equal (blake2b256 Nothing <| Bytes.toU8 metadataCbor)
+                Bytes.fromHex "36663d429bded43331a968fcaa3a0aba03d6d83474176b8c85a019b0b408ff8d"
+                    |> Expect.equal (Just <| Bytes.blake2b256 metadataCbor)
         ]
 
 
@@ -33,10 +32,3 @@ auxiliaryData8a8f8dfe =
     , plutusV2Scripts = []
     , plutusV3Scripts = []
     }
-
-
-strToBytes : String -> List Int
-strToBytes str =
-    Bytes.fromHex str
-        |> Maybe.map Bytes.toU8
-        |> Maybe.withDefault []

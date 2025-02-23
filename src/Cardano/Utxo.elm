@@ -58,7 +58,7 @@ import Bytes.Comparable as Bytes exposing (Bytes)
 import Cardano.Address as Address exposing (Address)
 import Cardano.Data as Data exposing (Data)
 import Cardano.MultiAsset as MultiAsset exposing (MultiAsset)
-import Cardano.Script as Script exposing (Script)
+import Cardano.Script as Script
 import Cardano.Value as Value exposing (Value)
 import Cbor.Decode as D
 import Cbor.Decode.Extra as D
@@ -139,7 +139,7 @@ type alias Output =
     { address : Address
     , amount : Value
     , datumOption : Maybe DatumOption
-    , referenceScript : Maybe Script
+    , referenceScript : Maybe Script.Reference
     }
 
 
@@ -265,8 +265,8 @@ encodeOutput output =
             >> E.field 1 Value.encode .amount
             >> E.optionalField 2 encodeDatumOption .datumOption
             >> E.optionalField 3
-                (Script.toCbor
-                    >> E.encode
+                (Script.refBytes
+                    >> Bytes.toBytes
                     >> E.tagged Tag.Cbor E.bytes
                 )
                 .referenceScript
@@ -343,14 +343,14 @@ decodeOutput =
     script_ref = #6.24(bytes .cbor script)
 
 -}
-decodeScriptRef : D.Decoder Script
+decodeScriptRef : D.Decoder Script.Reference
 decodeScriptRef =
     D.tagged Tag.Cbor D.bytes
         |> D.andThen
             (\( _, scriptCbor ) ->
-                case D.decode Script.fromCbor scriptCbor of
-                    Just script ->
-                        D.succeed script
+                case Script.refFromBytes (Bytes.fromBytes scriptCbor) of
+                    Just scriptRef ->
+                        D.succeed scriptRef
 
                     Nothing ->
                         D.fail

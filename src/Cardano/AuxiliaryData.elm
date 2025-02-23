@@ -14,7 +14,6 @@ module Cardano.AuxiliaryData exposing
 
 -}
 
-import Blake2b exposing (blake2b256)
 import Bytes.Comparable as Bytes exposing (Bytes)
 import Cardano.Metadatum as Metadatum exposing (Metadatum)
 import Cardano.Script as Script exposing (NativeScript, ScriptCbor)
@@ -56,9 +55,7 @@ hash : AuxiliaryData -> Bytes Hash
 hash data =
     E.encode (toCbor data)
         |> Bytes.fromBytes
-        |> Bytes.toU8
-        |> blake2b256 Nothing
-        |> Bytes.fromU8
+        |> Bytes.blake2b256
 
 
 {-| Phantom type for auxiliary data hashes.

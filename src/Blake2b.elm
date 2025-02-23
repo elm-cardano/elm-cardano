@@ -3,7 +3,8 @@ module Blake2b exposing (blake2b224, blake2b256, blake2b512)
 import Bitwise
 import Blake2b.Int128 as Int128 exposing (Int128(..))
 import Blake2b.UInt64 as UInt64
-import List.Extra as List
+import List.Extra
+import List.ExtraBis
 import UInt64 exposing (UInt64)
 
 
@@ -68,12 +69,12 @@ blake2b mKey hashBytesLength input =
 
         -- Make 128 bytes input blocks ("d[0..dd-1]")
         inputBlocks =
-            List.chunksOf 128 preprocessedInput
+            List.ExtraBis.chunksOf 128 preprocessedInput
 
         -- Initialize the state ("h")
         initialState =
             blake2bIV
-                |> List.updateAt 0
+                |> List.Extra.updateAt 0
                     (\w ->
                         UInt64.xor w (UInt64.fromInt 0x01010000)
                             |> UInt64.xor (UInt64.shiftLeftBy 8 kk)
@@ -98,7 +99,7 @@ blake2b mKey hashBytesLength input =
 
         -- Process final block
         lastBlock =
-            List.last inputBlocks |> Maybe.withDefault []
+            List.Extra.last inputBlocks |> Maybe.withDefault []
 
         lastCtr =
             case UInt64.compare kk UInt64.zero of
@@ -112,7 +113,7 @@ blake2b mKey hashBytesLength input =
     in
     compress updatedState lastBlock lastCtr True
         |> List.concatMap (UInt64.toBigEndianBytes >> List.reverse)
-        |> List.take64 hashBytesLength
+        |> List.ExtraBis.take64 hashBytesLength
 
 
 {-| Compression function takes the state vector ("h" in spec), message block
@@ -126,7 +127,7 @@ compress state block (Int128 ctrHigh ctrLow) finalBlockFlag =
         blockWords : List UInt64
         blockWords =
             (block ++ List.repeat (128 - List.length block) 0x00)
-                |> List.chunksOf 8
+                |> List.ExtraBis.chunksOf 8
                 |> List.map UInt64.fromLittleEndianBytes
 
         -- Initialize local vector with state and IV
@@ -157,29 +158,29 @@ compress state block (Int128 ctrHigh ctrLow) finalBlockFlag =
         sigmaMixingStep { a, b, c, d } si sj v =
             let
                 x =
-                    blockWords |> List.get64 si |> Maybe.withDefault UInt64.zero
+                    blockWords |> List.ExtraBis.get64 si |> Maybe.withDefault UInt64.zero
 
                 y =
-                    blockWords |> List.get64 sj |> Maybe.withDefault UInt64.zero
+                    blockWords |> List.ExtraBis.get64 sj |> Maybe.withDefault UInt64.zero
 
                 va =
-                    List.get64 a v |> Maybe.withDefault UInt64.zero
+                    List.ExtraBis.get64 a v |> Maybe.withDefault UInt64.zero
 
                 vb =
-                    List.get64 b v |> Maybe.withDefault UInt64.zero
+                    List.ExtraBis.get64 b v |> Maybe.withDefault UInt64.zero
 
                 vc =
-                    List.get64 c v |> Maybe.withDefault UInt64.zero
+                    List.ExtraBis.get64 c v |> Maybe.withDefault UInt64.zero
 
                 vd =
-                    List.get64 d v |> Maybe.withDefault UInt64.zero
+                    List.ExtraBis.get64 d v |> Maybe.withDefault UInt64.zero
 
                 -- { vaNew, vbNew, vcNew, vdNew } =
                 newVsQuad =
                     mixing va vb vc vd x y
             in
             v
-                |> List.indexedMap64
+                |> List.ExtraBis.indexedMap64
                     (\i v0 ->
                         if i == a then
                             newVsQuad.a
@@ -234,8 +235,8 @@ compress state block (Int128 ctrHigh ctrLow) finalBlockFlag =
             UInt64.xor hi vi |> UInt64.xor vii
         )
         state
-        (List.sublist 0 8 newV)
-        (List.sublist 8 8 newV)
+        (List.ExtraBis.sublist 0 8 newV)
+        (List.ExtraBis.sublist 8 8 newV)
 
 
 blake2bIV : List UInt64

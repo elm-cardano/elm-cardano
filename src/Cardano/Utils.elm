@@ -1,8 +1,8 @@
-module Cardano.Utils exposing (RationalNumber, decodeRational, encodeRationalNumber)
+module Cardano.Utils exposing (RationalNumber, UnitInterval, PositiveInterval, decodeRational, encodeRationalNumber)
 
 {-| Just a utility module to avoid cyclic import dependencies.
 
-@docs RationalNumber, decodeRational, encodeRationalNumber
+@docs RationalNumber, UnitInterval, PositiveInterval, decodeRational, encodeRationalNumber
 
 -}
 
@@ -17,6 +17,18 @@ type alias RationalNumber =
     { numerator : Int
     , denominator : Int
     }
+
+
+{-| Represents a unit interval (0 to 1).
+-}
+type alias UnitInterval =
+    RationalNumber
+
+
+{-| Represents a positive interval (> 0).
+-}
+type alias PositiveInterval =
+    RationalNumber
 
 
 {-| Encoder for RationalNumber type.

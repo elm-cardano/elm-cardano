@@ -3,7 +3,7 @@ port module Main exposing (main)
 import Blake2b exposing (blake2b224)
 import Browser
 import Bytes.Comparable as Bytes exposing (Bytes)
-import Cardano exposing (CertificateIntent(..), CredentialWitness(..), Fee(..), ScriptWitness(..), SpendSource(..), TxIntent(..), VoterWitness(..), WitnessSource(..), dummyBytes)
+import Cardano exposing (CertificateIntent(..), CredentialWitness(..), Fee(..), ScriptWitness(..), SpendSource(..), TxIntent(..), VoterWitness(..), WitnessSource(..))
 import Cardano.Address as Address exposing (Address, Credential(..), CredentialHash, NetworkId(..), StakeCredential(..))
 import Cardano.Cip30 as Cip30
 import Cardano.CoinSelection as CoinSelection
@@ -113,9 +113,9 @@ completeStartup s =
                 -- Remark: to do it properly, we should return an error if the stake cred is not a vkey hash
                 ( myKeyCred, myStakeKeyHash ) =
                     ( Address.extractPubKeyHash changeAddress
-                        |> Maybe.withDefault (dummyBytes 28 "ERROR")
+                        |> Maybe.withDefault (Bytes.dummy 28 "ERROR")
                     , Address.extractStakeKeyHash changeAddress
-                        |> Maybe.withDefault (dummyBytes 28 "ERROR")
+                        |> Maybe.withDefault (Bytes.dummy 28 "ERROR")
                     )
 
                 -- Generate native script that checks stake credential
@@ -457,7 +457,7 @@ update msg model =
                     ( model, Cmd.none )
 
         ( SkipRegisterButtonClicked, Initialized context _ ) ->
-            ( TxSubmitted context RegisteringDRep { txId = Cardano.dummyBytes 32 "", errors = "" }
+            ( TxSubmitted context RegisteringDRep { txId = Bytes.dummy 32 "", errors = "" }
             , Cmd.none
             )
 
@@ -491,15 +491,10 @@ update msg model =
                             []
             in
             case regDRepTxAttempt of
-                Ok regTx ->
-                    let
-                        cleanTx =
-                            Transaction.updateSignatures (\_ -> Nothing) regTx
-                                |> Debug.log "cleanTx"
-                    in
-                    ( Submitting ctx RegisteringDRep { tx = cleanTx, errors = "" }
+                Ok { tx } ->
+                    ( Submitting ctx RegisteringDRep { tx = tx, errors = "" }
                       -- partialSign = False -- Full sign failure with Eternl
-                    , toWallet (Cip30.encodeRequest (Cip30.signTx ctx.loadedWallet.wallet { partialSign = True } cleanTx))
+                    , toWallet (Cip30.encodeRequest (Cip30.signTx ctx.loadedWallet.wallet { partialSign = True } tx))
                     )
 
                 Err err ->
@@ -575,16 +570,12 @@ update msg model =
                             []
             in
             case voteTxAttempt of
-                Ok voteTx ->
-                    let
-                        cleanTx =
-                            Transaction.updateSignatures (\_ -> Nothing) voteTx
-                    in
-                    ( FeeProviderSigning ctx { tx = cleanTx, errors = "" }
+                Ok { tx } ->
+                    ( FeeProviderSigning ctx { tx = tx, errors = "" }
                     , toExternalApp
                         (JE.object
                             [ ( "requestType", JE.string "ask-signature" )
-                            , ( "tx", JE.string <| Bytes.toHex <| Transaction.serialize cleanTx )
+                            , ( "tx", JE.string <| Bytes.toHex <| Transaction.serialize tx )
                             ]
                         )
                     )
@@ -626,14 +617,10 @@ update msg model =
                             []
             in
             case unregDRepTxAttempt of
-                Ok unregTx ->
-                    let
-                        cleanTx =
-                            Transaction.updateSignatures (\_ -> Nothing) unregTx
-                    in
-                    ( Submitting ctx UnregisteringDRep { tx = cleanTx, errors = "" }
+                Ok { tx } ->
+                    ( Submitting ctx UnregisteringDRep { tx = tx, errors = "" }
                       -- partialSign = False -- Full sign error with eternl
-                    , toWallet (Cip30.encodeRequest (Cip30.signTx ctx.loadedWallet.wallet { partialSign = True } cleanTx))
+                    , toWallet (Cip30.encodeRequest (Cip30.signTx ctx.loadedWallet.wallet { partialSign = True } tx))
                     )
 
                 Err err ->

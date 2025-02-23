@@ -24,7 +24,7 @@ example ex =
         Err error ->
             Debug.toString error
 
-        Ok tx ->
+        Ok { tx } ->
             prettyTx tx
 
 

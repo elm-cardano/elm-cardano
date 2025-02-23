@@ -304,16 +304,9 @@ update msg model =
                             [ Spend (FromWallet address oneAda), SendTo address oneAda ]
                     in
                     case Cardano.finalize localStateUtxos [] txIntents of
-                        Ok tx ->
-                            let
-                                witnessSet =
-                                    tx.witnessSet
-
-                                cleanedTx =
-                                    { tx | witnessSet = { witnessSet | vkeywitness = Nothing } }
-                            in
-                            ( { model | signedTx = WaitingSign cleanedTx }
-                            , toWallet (Cip30.encodeRequest (Cip30.signTx wallet { partialSign = False } cleanedTx))
+                        Ok { tx } ->
+                            ( { model | signedTx = WaitingSign tx }
+                            , toWallet (Cip30.encodeRequest (Cip30.signTx wallet { partialSign = False } tx))
                             )
 
                         Err txBuildingError ->

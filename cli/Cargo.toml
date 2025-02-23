@@ -1,9 +1,9 @@
 [package]
 name = "elm-cardano"
-version = "0.1.6"
+version = "0.2.0"
 edition = "2021"
 repository = "https://github.com/elm-cardano/elm-cardano"
 
 [dependencies]
-anyhow = "1.0.86"
-argh = "0.1.12"
+anyhow = "1.0.95"
+argh = "0.1.13"

@@ -4,10 +4,11 @@ module Cardano.Transaction exposing
     , WitnessSet, newWitnessSet
     , Update
     , ScriptContext, ScriptPurpose(..)
-    , Certificate(..), PoolId, GenesisHash, GenesisDelegateHash, VrfKeyHash, RewardSource(..), RewardTarget(..), MoveInstantaneousReward
-    , Relay(..), IpV4, IpV6, PoolParams, PoolMetadata, PoolMetadataHash
-    , VKeyWitness, BootstrapWitness, Ed25519PublicKey, Ed25519Signature, BootstrapWitnessChainCode, BootstrapWitnessAttributes
-    , FeeParameters, RefScriptFeeParameters, defaultTxFeeParams, computeFees, allInputs
+    , Certificate(..), GenesisHash, GenesisDelegateHash, RewardSource(..), RewardTarget(..), MoveInstantaneousReward
+    , VKeyWitness, hashVKey, BootstrapWitness, Ed25519PublicKey, Ed25519Signature, BootstrapWitnessChainCode, BootstrapWitnessAttributes
+    , FeeParameters, RefScriptFeeParameters, defaultTxFeeParams, computeFees, computeRefScriptFee, computeScriptExecFee, computeTxSizeFee, estimateRefScriptFeeSavings
+    , allInputs
+    , computeTxId, locateScriptWithHash
     , updateSignatures, hashScriptData
     , deserialize, serialize, encodeToCbor
     , decodeWitnessSet, decodeVKeyWitness, encodeVKeyWitness
@@ -25,13 +26,15 @@ module Cardano.Transaction exposing
 
 @docs ScriptContext, ScriptPurpose
 
-@docs Certificate, PoolId, GenesisHash, GenesisDelegateHash, VrfKeyHash, RewardSource, RewardTarget, MoveInstantaneousReward
+@docs Certificate, GenesisHash, GenesisDelegateHash, RewardSource, RewardTarget, MoveInstantaneousReward
 
-@docs Relay, IpV4, IpV6, PoolParams, PoolMetadata, PoolMetadataHash
+@docs VKeyWitness, hashVKey, BootstrapWitness, Ed25519PublicKey, Ed25519Signature, BootstrapWitnessChainCode, BootstrapWitnessAttributes
 
-@docs VKeyWitness, BootstrapWitness, Ed25519PublicKey, Ed25519Signature, BootstrapWitnessChainCode, BootstrapWitnessAttributes
+@docs FeeParameters, RefScriptFeeParameters, defaultTxFeeParams, computeFees, computeRefScriptFee, computeScriptExecFee, computeTxSizeFee, estimateRefScriptFeeSavings
 
-@docs FeeParameters, RefScriptFeeParameters, defaultTxFeeParams, computeFees, allInputs
+@docs allInputs
+
+@docs computeTxId, locateScriptWithHash
 
 @docs updateSignatures, hashScriptData
 
@@ -41,18 +44,18 @@ module Cardano.Transaction exposing
 
 -}
 
-import Blake2b exposing (blake2b256)
 import Bytes.Comparable as Bytes exposing (Bytes)
 import Bytes.Map exposing (BytesMap)
 import Cardano.Address as Address exposing (Credential, CredentialHash, NetworkId(..), StakeAddress, decodeCredential)
 import Cardano.AuxiliaryData as AuxiliaryData exposing (AuxiliaryData)
 import Cardano.Data as Data exposing (Data)
-import Cardano.Gov as Gov exposing (ActionId, Anchor, CostModels, Drep, ProposalProcedure, ProtocolParamUpdate, UnitInterval, Voter, VotingProcedure)
+import Cardano.Gov as Gov exposing (ActionId, Anchor, CostModels, Drep, ProposalProcedure, ProtocolParamUpdate, Voter, VotingProcedure)
 import Cardano.MultiAsset as MultiAsset exposing (MultiAsset, PolicyId)
+import Cardano.Pool as Pool exposing (VrfKeyHash)
 import Cardano.Redeemer as Redeemer exposing (ExUnitPrices, Redeemer)
-import Cardano.Script as Script exposing (NativeScript, ScriptCbor)
-import Cardano.Utils as Utils exposing (RationalNumber)
-import Cardano.Utxo as Utxo exposing (Output, OutputReference, encodeOutput, encodeOutputReference)
+import Cardano.Script as Script exposing (NativeScript, Script, ScriptCbor)
+import Cardano.Utils exposing (RationalNumber)
+import Cardano.Utxo as Utxo exposing (Output, OutputReference, TransactionId, encodeOutput, encodeOutputReference)
 import Cbor.Decode as D
 import Cbor.Decode.Extra as D
 import Cbor.Encode as E
@@ -197,6 +200,13 @@ type alias VKeyWitness =
     }
 
 
+{-| Compute the 28-bytes Blake2b hash of a public key.
+-}
+hashVKey : Bytes Ed25519PublicKey -> Bytes CredentialHash
+hashVKey =
+    Bytes.blake2b224
+
+
 {-| Bootstrap witness
 -}
 type alias BootstrapWitness =
@@ -270,9 +280,9 @@ Most of the time, they require signatures from specific keys.
 type Certificate
     = StakeRegistrationCert { delegator : Credential } -- 0 (will be deprecated after Conway)
     | StakeDeregistrationCert { delegator : Credential } -- 1 (will be deprecated after Conway)
-    | StakeDelegationCert { delegator : Credential, poolId : Bytes PoolId } -- 2
-    | PoolRegistrationCert PoolParams -- 3
-    | PoolRetirementCert { poolId : Bytes PoolId, epoch : Natural } -- 4
+    | StakeDelegationCert { delegator : Credential, poolId : Bytes Pool.Id } -- 2
+    | PoolRegistrationCert Pool.Params -- 3
+    | PoolRetirementCert { poolId : Bytes Pool.Id, epoch : Natural } -- 4
     | GenesisKeyDelegationCert
         -- 5 (deprecated in Conway)
         { genesisHash : Bytes GenesisHash
@@ -284,25 +294,15 @@ type Certificate
     | RegCert { delegator : Credential, deposit : Natural } -- 7 Registers stake credentials
     | UnregCert { delegator : Credential, refund : Natural } -- 8 Unregisters stake credentials
     | VoteDelegCert { delegator : Credential, drep : Drep } -- 9 Delegates votes
-    | StakeVoteDelegCert { delegator : Credential, poolId : Bytes PoolId, drep : Drep } -- 10 Delegates to a stake pool and a DRep from the same certificate
-    | StakeRegDelegCert { delegator : Credential, poolId : Bytes PoolId, deposit : Natural } -- 11 Registers stake credentials and delegates to a stake pool
+    | StakeVoteDelegCert { delegator : Credential, poolId : Bytes Pool.Id, drep : Drep } -- 10 Delegates to a stake pool and a DRep from the same certificate
+    | StakeRegDelegCert { delegator : Credential, poolId : Bytes Pool.Id, deposit : Natural } -- 11 Registers stake credentials and delegates to a stake pool
     | VoteRegDelegCert { delegator : Credential, drep : Drep, deposit : Natural } -- 12 Registers stake credentials and delegates to a DRep
-    | StakeVoteRegDelegCert { delegator : Credential, poolId : Bytes PoolId, drep : Drep, deposit : Natural } -- 13 Registers stake credentials, delegates to a pool, and to a DRep
+    | StakeVoteRegDelegCert { delegator : Credential, poolId : Bytes Pool.Id, drep : Drep, deposit : Natural } -- 13 Registers stake credentials, delegates to a pool, and to a DRep
     | AuthCommitteeHotCert { committeeColdCredential : Credential, committeeHotCredential : Credential } -- 14 Authorizes the constitutional committee hot credential
     | ResignCommitteeColdCert { committeeColdCredential : Credential, anchor : Maybe Anchor } -- 15 Resigns the constitutional committee cold credential
     | RegDrepCert { drepCredential : Credential, deposit : Natural, anchor : Maybe Anchor } -- 16 Registers DRep's credentials
     | UnregDrepCert { drepCredential : Credential, refund : Natural } -- 17 Unregisters (retires) DRep's credentials
     | UpdateDrepCert { drepCredential : Credential, anchor : Maybe Anchor } -- 18 Updates DRep's metadata anchor
-
-
-{-| Phantom type for pool ID.
-This is a 28-bytes Blake2b-224 hash.
-
--- TODO: Move Pool stuff into its own module
-
--}
-type alias PoolId =
-    CredentialHash
 
 
 {-| Phantom type for Genesis hash.
@@ -317,63 +317,6 @@ This is a 28-bytes Blake2b-224 hash.
 -}
 type GenesisDelegateHash
     = GenesisDelegateHash Never
-
-
-{-| Phantom type for VRF key hash.
-This is a 32-bytes Blake2b-256 hash.
--}
-type VrfKeyHash
-    = VrfKeyHash Never
-
-
-{-| Parameters for stake pool registration.
--}
-type alias PoolParams =
-    { operator : Bytes PoolId
-    , vrfKeyHash : Bytes VrfKeyHash
-    , pledge : Natural
-    , cost : Natural
-    , margin : UnitInterval
-    , rewardAccount : StakeAddress
-    , poolOwners : List (Bytes CredentialHash)
-    , relays : List Relay
-    , poolMetadata : Maybe PoolMetadata
-    }
-
-
-{-| A pool's relay information.
--}
-type Relay
-    = SingleHostAddr { port_ : Maybe Int, ipv4 : Maybe (Bytes IpV4), ipv6 : Maybe (Bytes IpV6) }
-    | SingleHostName { port_ : Maybe Int, dnsName : String }
-    | MultiHostName { dnsName : String }
-
-
-{-| Phantom type for 4-bytes IPV4 addresses.
--}
-type IpV4
-    = IpV4 Never
-
-
-{-| Phantom type for 16-bytes IPV6 addresses.
--}
-type IpV6
-    = IpV6 Never
-
-
-{-| A pool's metadata hash.
--}
-type alias PoolMetadata =
-    { url : String -- tstr .size (0..64)
-    , poolMetadataHash : Bytes PoolMetadataHash
-    }
-
-
-{-| Phantom type for 32-bytes pool metadata hash.
-This is a Blacke2b-256 hash.
--}
-type PoolMetadataHash
-    = PoolMetadataHash Never
 
 
 {-| Payload for [MoveInstantaneousRewardsCert].
@@ -446,11 +389,28 @@ type alias RefScriptFeeParameters =
 {-| Re-compute fees for a transaction (does not read `body.fee`).
 -}
 computeFees : FeeParameters -> { refScriptBytes : Int } -> Transaction -> { txSizeFee : Natural, scriptExecFee : Natural, refScriptSizeFee : Natural }
-computeFees { baseFee, feePerByte, scriptExUnitPrice, refScriptFeeParams } { refScriptBytes } tx =
-    let
-        txSize =
-            Bytes.width (serialize tx)
+computeFees ({ scriptExUnitPrice, refScriptFeeParams } as feeParams) { refScriptBytes } tx =
+    { txSizeFee = computeTxSizeFee feeParams tx
+    , scriptExecFee = computeScriptExecFee scriptExUnitPrice tx
+    , refScriptSizeFee = computeRefScriptFee refScriptFeeParams refScriptBytes
+    }
 
+
+{-| Compute the part of the fees of a Transaction directly related to the Tx size in bytes.
+
+The "baseFee" and "feePerByte" are network parameters.
+
+-}
+computeTxSizeFee : { a | baseFee : Int, feePerByte : Int } -> Transaction -> Natural
+computeTxSizeFee { baseFee, feePerByte } tx =
+    Natural.fromSafeInt (baseFee + feePerByte * (Bytes.width <| serialize tx))
+
+
+{-| Compute the part of the fees of a Transaction related to the execution of scripts in the Plutus VM.
+-}
+computeScriptExecFee : ExUnitPrices -> Transaction -> Natural
+computeScriptExecFee { stepPrice, memPrice } tx =
+    let
         ( totalSteps, totalMem ) =
             tx.witnessSet.redeemer
                 |> Maybe.withDefault []
@@ -463,19 +423,16 @@ computeFees { baseFee, feePerByte, scriptExUnitPrice, refScriptFeeParams } { ref
                     ( Natural.zero, Natural.zero )
 
         totalStepsCost =
-            Natural.mul totalSteps (Natural.fromSafeInt scriptExUnitPrice.stepPrice.numerator)
-                |> Natural.divBy (Natural.fromSafeInt scriptExUnitPrice.stepPrice.denominator)
+            Natural.mul totalSteps (Natural.fromSafeInt stepPrice.numerator)
+                |> Natural.divBy (Natural.fromSafeInt stepPrice.denominator)
                 |> Maybe.withDefault Natural.zero
 
         totalMemCost =
-            Natural.mul totalMem (Natural.fromSafeInt scriptExUnitPrice.memPrice.numerator)
-                |> Natural.divBy (Natural.fromSafeInt scriptExUnitPrice.memPrice.denominator)
+            Natural.mul totalMem (Natural.fromSafeInt memPrice.numerator)
+                |> Natural.divBy (Natural.fromSafeInt memPrice.denominator)
                 |> Maybe.withDefault Natural.zero
     in
-    { txSizeFee = Natural.fromSafeInt (baseFee + feePerByte * txSize)
-    , scriptExecFee = Natural.add totalStepsCost totalMemCost
-    , refScriptSizeFee = refScriptFee refScriptFeeParams refScriptBytes
-    }
+    Natural.add totalStepsCost totalMemCost
 
 
 {-| Helper function to compute the fees associated with reference script size.
@@ -498,8 +455,8 @@ tierRefScriptFee = go 0 minFeeRefScriptCostPerByte
 ```
 
 -}
-refScriptFee : RefScriptFeeParameters -> Int -> Natural
-refScriptFee ({ minFeeRefScriptCostPerByte } as p) refScriptBytes =
+computeRefScriptFee : RefScriptFeeParameters -> Int -> Natural
+computeRefScriptFee ({ minFeeRefScriptCostPerByte } as p) refScriptBytes =
     let
         baseTierPricePerByte =
             RationalNat.fromSafeInt minFeeRefScriptCostPerByte
@@ -531,6 +488,38 @@ refScriptFeeHelper p { bytesLeft, tierPricePerByte } costAccum =
             newCostAccum
 
 
+{-| Estimate the potential saving in transaction fees by passing a script by reference
+instead of putting inline in the Tx witnesses.
+-}
+estimateRefScriptFeeSavings : Script -> Int
+estimateRefScriptFeeSavings script =
+    let
+        refScriptOutputRef =
+            { transactionId = Bytes.dummy 32 "", outputIndex = 0 }
+
+        refScript =
+            Script.refFromScript script
+
+        txWithRefScript =
+            { new | body = { newBody | referenceInputs = [ refScriptOutputRef ] } }
+
+        txWithInlineScript =
+            case script of
+                Script.Native nativeScript ->
+                    { new | witnessSet = { newWitnessSet | nativeScripts = Just [ nativeScript ] } }
+
+                Script.Plutus plutusScript ->
+                    { new | witnessSet = { newWitnessSet | plutusV3Script = Just [ plutusScript.script ] } }
+
+        feesWithoutExecution tx =
+            Natural.add
+                (computeTxSizeFee defaultTxFeeParams tx)
+                (computeRefScriptFee defaultTxFeeParams.refScriptFeeParams <| Bytes.width (Script.refBytes refScript))
+    in
+    (Natural.toInt <| feesWithoutExecution txWithInlineScript)
+        - (Natural.toInt <| feesWithoutExecution txWithRefScript)
+
+
 {-| Extract all inputs that are used in the transaction,
 from inputs, collateral and reference inputs.
 -}
@@ -543,6 +532,38 @@ allInputs tx =
         ]
         |> List.map (\ref -> ( ref, () ))
         |> Utxo.refDictFromList
+
+
+{-| Serialize the body and compute the Tx ID.
+-}
+computeTxId : Transaction -> Bytes TransactionId
+computeTxId tx =
+    E.encode (encodeTransactionBody tx.body)
+        |> Bytes.fromBytes
+        |> Bytes.blake2b256
+
+
+{-| Helper function to locate the index of a script within a list of Outputs.
+-}
+locateScriptWithHash : Bytes CredentialHash -> List Output -> Maybe ( Int, Script.Reference )
+locateScriptWithHash scriptHash outputs =
+    let
+        findScriptInOutput : Int -> Output -> Maybe ( Int, Script.Reference )
+        findScriptInOutput index output =
+            case output.referenceScript of
+                Just scriptRef ->
+                    if Script.refHash scriptRef == scriptHash then
+                        Just ( index, scriptRef )
+
+                    else
+                        Nothing
+
+                Nothing ->
+                    Nothing
+    in
+    List.indexedMap findScriptInOutput outputs
+        |> List.filterMap identity
+        |> List.head
 
 
 {-| Clear all signatures from the witness set of the Tx.
@@ -577,9 +598,7 @@ hashScriptData costModels tx =
     case tx.witnessSet.redeemer of
         Nothing ->
             Bytes.fromHexUnchecked ("80" ++ datumsHex ++ "a0")
-                |> Bytes.toU8
-                |> blake2b256 Nothing
-                |> Bytes.fromU8
+                |> Bytes.blake2b256
 
         Just redeemers ->
             let
@@ -609,9 +628,7 @@ hashScriptData costModels tx =
                         |> Bytes.toHex
             in
             Bytes.fromHexUnchecked (redeemersHex ++ datumsHex ++ languageViewsHex)
-                |> Bytes.toU8
-                |> blake2b256 Nothing
-                |> Bytes.fromU8
+                |> Bytes.blake2b256
 
 
 
@@ -796,17 +813,7 @@ encodeCertificate certificate =
                 ]
 
             PoolRegistrationCert poolParams ->
-                [ E.int 3
-                , Bytes.toCbor poolParams.operator
-                , Bytes.toCbor poolParams.vrfKeyHash
-                , EE.natural poolParams.pledge
-                , EE.natural poolParams.cost
-                , Utils.encodeRationalNumber poolParams.margin
-                , Address.stakeAddressToCbor poolParams.rewardAccount
-                , E.list Bytes.toCbor poolParams.poolOwners
-                , E.list encodeRelay poolParams.relays
-                , E.maybe encodePoolMetadata poolParams.poolMetadata
-                ]
+                E.int 3 :: Pool.encodeParams poolParams
 
             PoolRetirementCert { poolId, epoch } ->
                 [ E.int 4
@@ -915,37 +922,6 @@ encodeCertificate certificate =
                 , Address.credentialToCbor drepCredential
                 , E.maybe Gov.encodeAnchor anchor
                 ]
-
-
-encodeRelay : Relay -> E.Encoder
-encodeRelay relay =
-    E.list identity <|
-        case relay of
-            SingleHostAddr { port_, ipv4, ipv6 } ->
-                [ E.int 0
-                , E.maybe E.int port_
-                , E.maybe Bytes.toCbor ipv4
-                , E.maybe Bytes.toCbor ipv6
-                ]
-
-            SingleHostName { port_, dnsName } ->
-                [ E.int 1
-                , E.maybe E.int port_
-                , E.string dnsName
-                ]
-
-            MultiHostName { dnsName } ->
-                [ E.int 2
-                , E.string dnsName
-                ]
-
-
-encodePoolMetadata : PoolMetadata -> E.Encoder
-encodePoolMetadata =
-    E.tuple <|
-        E.elems
-            >> E.elem E.string .url
-            >> E.elem Bytes.toCbor .poolMetadataHash
 
 
 encodeMoveInstantaneousReward : MoveInstantaneousReward -> E.Encoder
@@ -1301,7 +1277,7 @@ decodeCertificateHelper length id =
         -- pool_registration = (3, pool_params)
         -- pool_params is of size 9
         ( 10, 3 ) ->
-            D.map PoolRegistrationCert <| D.oneOf [ decodePoolParams, D.failWith "Failed to decode pool params" ]
+            D.map PoolRegistrationCert <| D.oneOf [ Pool.decodeParams, D.failWith "Failed to decode pool params" ]
 
         -- pool_retirement = (4, pool_keyhash, epoch)
         ( 3, 4 ) ->
@@ -1424,64 +1400,6 @@ decodeCertificateHelper length id =
                     ++ ", "
                     ++ String.fromInt id
                     ++ ")"
-
-
-decodePoolParams : D.Decoder PoolParams
-decodePoolParams =
-    D.succeed PoolParams
-        |> D.keep (D.oneOf [ D.map Bytes.fromBytes D.bytes, D.failWith "Failed to decode operator" ])
-        |> D.keep (D.oneOf [ D.map Bytes.fromBytes D.bytes, D.failWith "Failed to decode vrfkeyhash" ])
-        |> D.keep (D.oneOf [ D.natural, D.failWith "Failed to decode pledge" ])
-        |> D.keep D.natural
-        |> D.keep (D.oneOf [ Utils.decodeRational, D.failWith "Failed to decode rational" ])
-        |> D.keep (D.oneOf [ Address.decodeReward, D.failWith "Failed to decode reward" ])
-        |> D.keep (D.set (D.map Bytes.fromBytes D.bytes))
-        |> D.keep (D.list <| D.oneOf [ decodeRelay, D.failWith "Failed to decode Relay" ])
-        |> D.keep (D.oneOf [ D.maybe decodePoolMetadata, D.failWith "Failed to decode pool metadata" ])
-
-
-decodeRelay : D.Decoder Relay
-decodeRelay =
-    D.length
-        |> D.andThen (\length -> D.int |> D.andThen (decodeRelayHelper length))
-
-
-decodeRelayHelper : Int -> Int -> D.Decoder Relay
-decodeRelayHelper length id =
-    case ( length, id ) of
-        -- single_host_addr = ( 0, port / null, ipv4 / null, ipv6 / null )
-        ( 4, 0 ) ->
-            D.map3 (\port_ ipv4 ipv6 -> SingleHostAddr { port_ = port_, ipv4 = ipv4, ipv6 = ipv6 })
-                (D.maybe D.int)
-                (D.maybe <| D.map Bytes.fromBytes D.bytes)
-                (D.maybe <| D.map Bytes.fromBytes D.bytes)
-
-        -- single_host_name = ( 1, port / null, dns_name )  -- An A or AAAA DNS record
-        ( 3, 1 ) ->
-            D.map2 (\port_ dns -> SingleHostName { port_ = port_, dnsName = dns })
-                (D.maybe D.int)
-                D.string
-
-        -- multi_host_name = ( 2, dns_name )  -- A SRV DNS record
-        ( 2, 2 ) ->
-            D.map (\dns -> MultiHostName { dnsName = dns })
-                D.string
-
-        _ ->
-            D.failWith <|
-                "Unknown length and id for relay ("
-                    ++ String.fromInt length
-                    ++ ", "
-                    ++ String.fromInt id
-                    ++ ")"
-
-
-decodePoolMetadata : D.Decoder PoolMetadata
-decodePoolMetadata =
-    D.tuple PoolMetadata <|
-        D.elems
-            >> D.elem D.string
-            >> D.elem (D.map Bytes.fromBytes D.bytes)
 
 
 decodeMoveInstantaneousRewards : D.Decoder MoveInstantaneousReward

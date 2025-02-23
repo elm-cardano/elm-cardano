@@ -45,7 +45,7 @@ npm install -g elm elm-cardano
 
 # (Temporary) clone the elm-cardano repo to expose its elm modules
 # This step won’t be necessary when the elm package will be published
-git clone --depth 1 --branch v0.1.6 https://github.com/elm-cardano/elm-cardano.git
+git clone --depth 1 --branch v0.2.0 https://github.com/elm-cardano/elm-cardano.git
 
 # Initialize a template project in the elm-cardano-starter/ folder
 mkdir elm-cardano-starter && cd elm-cardano-starter
@@ -76,11 +76,10 @@ in the different documents in the `docs/` dir of the repo.
 ## Contributions
 
 Contributions are very welcomed! For now things are moving fast so I suggest
-discussing first over [TxPipe discord][txpipe-discord], in the
+discussing first over in the
 [#elm][elm-cardano-channel] channel.
 
-[txpipe-discord]: https://discord.gg/ZTHcHUy5HY
-[elm-cardano-channel]: https://discord.com/channels/946071061567529010/1168602442657697793
+[elm-cardano-channel]: https://discord.gg/UgXYyy9dHg
 
 The elm-cardano cli is built using the rust language.
 To build successfully, it attempts to statically load the WASM files for Aiken UPLC virtual machine.
@@ -121,3 +120,34 @@ cd examples/txbuild && npx elm-watch hot
 
 Many thanks to all people who contributed code and ideas to elm-cardano.
 Many thanks to the person (they know who they are) who contributed the logo.
+
+## Maintainer notes
+
+Don’t forget to update the version tag in the quickstart instructions
+
+Cargo-dist TLDR:
+```sh
+git commit -am "release: 0.2.0"
+git tag "v0.2.0"
+git push
+git push --tags
+```
+
+Then download, extract and publish the npm package from the GitHub release page.
+```sh
+# Inside the extracted package/ dir
+npm publish
+```
+
+Finally, don’t forget to update the docs published in the dedicated
+```sh
+cd frontend/
+mkdir temp/
+elm make --docs temp/docs.json
+git co elm-doc-preview
+cp temp/docs.json docs.json
+git ci -a --amend
+git push --force
+git co main
+rm -r temp/
+```
