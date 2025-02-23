@@ -429,10 +429,10 @@ finalizeTx ctx mPrevTxId intents =
                    )
     in
     case txAttempt of
-        Ok lockTx ->
+        Ok { tx } ->
             let
                 cleanTx =
-                    Tx.updateSignatures (\_ -> Nothing) lockTx
+                    Tx.updateSignatures (\_ -> Nothing) tx
             in
             ( Submitting ctx action { tx = cleanTx, errors = "" }
             , Cip30.signTx ctx.loadedWallet.wallet { partialSign = False } cleanTx
