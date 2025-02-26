@@ -8,7 +8,7 @@ module Cardano.Uplc exposing
 
 @docs evalScriptsCosts, evalScriptsCostsRaw
 
-@docs VmConfig, defaultVmConfig, conwayDefaultBudget, conwayDefaultCostModels, conwayNewDefaultCostModels
+@docs VmConfig, defaultVmConfig, conwayDefaultBudget, conwayDefaultCostModels
 
 @docs SlotConfig, slotConfigMainnet, slotConfigPreview, slotConfigPreprod
 
