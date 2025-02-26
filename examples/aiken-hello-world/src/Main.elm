@@ -175,6 +175,18 @@ update msg model =
                     , Cmd.none
                     )
 
+                -- Received an error message from the wallet
+                ( Ok (Cip30.ApiError { info }), Submitting ctx action { tx, errors } ) ->
+                    ( Submitting ctx action { tx = tx, errors = "CIP30 API Error: " ++ info }
+                    , Cmd.none
+                    )
+
+                -- Unknown type of message received from the wallet
+                ( Ok (Cip30.UnhandledResponseType error), Submitting ctx action { tx, errors } ) ->
+                    ( Submitting ctx action { tx = tx, errors = "Unhandled CIP30 Response: " ++ error }
+                    , Cmd.none
+                    )
+
                 _ ->
                     ( model, Cmd.none )
 
