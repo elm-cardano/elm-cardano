@@ -1,6 +1,6 @@
 name = "aiken-lang/aiken-gift-card"
 version = "0.0.0"
-compiler = "v1.1.9"
+compiler = "v1.1.12"
 plutus = "v3"
 license = "Apache-2.0"
 description = "Aiken contracts for project 'aiken-lang/aiken-gift-card'"
