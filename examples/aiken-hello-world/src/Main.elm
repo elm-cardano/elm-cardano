@@ -215,11 +215,7 @@ update msg model =
         ( GotBlueprint result, WalletLoaded w _ ) ->
             case result of
                 Ok lockScript ->
-                    let
-                        computedHash =
-                            Script.hash (Script.Plutus { version = Script.PlutusV3, script = lockScript.compiledCode })
-                    in
-                    ( BlueprintLoaded w (Debug.log (Bytes.toHex computedHash) lockScript) { errors = "" }, Cmd.none )
+                    ( BlueprintLoaded w lockScript) { errors = "" }, Cmd.none )
 
                 Err err ->
                     -- Handle error as needed
