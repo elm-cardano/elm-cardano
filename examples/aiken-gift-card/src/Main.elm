@@ -6,9 +6,7 @@ import Bytes.Map as BytesMap
 import Cardano exposing (ScriptWitness(..), SpendSource(..), TxIntent(..), WitnessSource(..))
 import Cardano.Address as Address exposing (Address, Credential(..), CredentialHash, NetworkId(..))
 import Cardano.Cip30 as Cip30
-import Cardano.CoinSelection as CoinSelection
 import Cardano.Data as Data
-import Cardano.Gov exposing (CostModels)
 import Cardano.MultiAsset exposing (AssetName)
 import Cardano.Script exposing (PlutusVersion(..), ScriptCbor)
 import Cardano.Transaction as Tx exposing (Transaction)
@@ -22,7 +20,6 @@ import Html.Events as HE exposing (onClick)
 import Http
 import Integer
 import Json.Decode as JD exposing (Decoder, Value)
-import Json.Encode as JE
 import Natural
 
 
@@ -81,16 +78,6 @@ type alias LockScript =
     }
 
 
-type CostModelsState
-    = FetchingCostModels
-    | CostModelsFailed String
-    | CostModelsLoaded ProtocolParams
-
-
-type alias ProtocolParams =
-    { costModels : CostModels }
-
-
 type alias AppContext =
     { loadedWallet : LoadedWallet
     , pickedUtxo : OutputReference
@@ -98,7 +85,6 @@ type alias AppContext =
     , localStateUtxos : Utxo.RefDict Output
     , lockScript : LockScript
     , scriptAddress : Address
-    , costModels : CostModelsState
     }
 
 
@@ -169,7 +155,6 @@ type Msg
     | GotBlueprint (Result Http.Error UnappliedScript)
     | UpdateTokenName String
     | FinalizeTokenName
-    | GotProtocolParams (Result Http.Error ProtocolParams)
     | LockAdaButtonClicked
     | UnlockAdaButtonClicked
 
@@ -325,20 +310,9 @@ update msg model =
                                         , paymentCredential = ScriptHash hash
                                         , stakeCredential = Nothing
                                         }
-                                , costModels = FetchingCostModels
                                 }
                                 { errors = errors }
-                            , Http.post
-                                { url = "https://preview.koios.rest/api/v1/ogmios"
-                                , body =
-                                    Http.jsonBody
-                                        (JE.object
-                                            [ ( "jsonrpc", JE.string "2.0" )
-                                            , ( "method", JE.string "queryLedgerState/protocolParameters" )
-                                            ]
-                                        )
-                                , expect = Http.expectJson GotProtocolParams protocolParamsDecoder
-                                }
+                            , Cmd.none
                             )
 
                         Err err ->
@@ -350,32 +324,6 @@ update msg model =
                     ( BlueprintLoaded w unappliedScript { tokenName = tokenName, errors = "Selected wallet has no UTxOs." }
                     , Cmd.none
                     )
-
-        ( GotProtocolParams (Ok pp), ParametersSet ctx errors ) ->
-            ( ParametersSet { ctx | costModels = CostModelsLoaded pp } errors, Cmd.none )
-
-        ( GotProtocolParams (Err err), ParametersSet ctx errors ) ->
-            let
-                setCostModelFailureFromMsg e =
-                    ParametersSet { ctx | costModels = CostModelsFailed e } errors
-            in
-            ( case err of
-                Http.BadUrl errMsg ->
-                    setCostModelFailureFromMsg ("Bad URL: " ++ errMsg)
-
-                Http.Timeout ->
-                    setCostModelFailureFromMsg "Request timeout"
-
-                Http.NetworkError ->
-                    setCostModelFailureFromMsg "Network error"
-
-                Http.BadStatus status ->
-                    setCostModelFailureFromMsg ("Bad status: " ++ String.fromInt status)
-
-                Http.BadBody errMsg ->
-                    setCostModelFailureFromMsg ("Bad body: " ++ errMsg)
-            , Cmd.none
-            )
 
         ( LockAdaButtonClicked, ParametersSet ctx _ ) ->
             lock ctx
@@ -475,21 +423,7 @@ finalizeTx ctx mPrevTxId intents =
 
         txAttempt =
             intents
-                |> (case ctx.costModels of
-                        CostModelsLoaded protocolParams ->
-                            Cardano.finalizeAdvanced
-                                { govState = Cardano.emptyGovernanceState
-                                , localStateUtxos = ctx.localStateUtxos
-                                , coinSelectionAlgo = CoinSelection.largestFirst
-                                , evalScriptsCosts = Uplc.evalScriptsCosts Uplc.defaultVmConfig
-                                , costModels = protocolParams.costModels
-                                }
-                                (Cardano.AutoFee { paymentSource = ctx.loadedWallet.changeAddress })
-                                []
-
-                        _ ->
-                            Cardano.finalize ctx.localStateUtxos []
-                   )
+                |> Cardano.finalize ctx.localStateUtxos []
     in
     case txAttempt of
         Ok { tx } ->
@@ -547,14 +481,6 @@ makeMintBurnIntent lockScript tokenName forMint =
     )
 
 
-protocolParamsDecoder : Decoder ProtocolParams
-protocolParamsDecoder =
-    JD.map3 (\v1 v2 v3 -> { costModels = CostModels (Just v1) (Just v2) (Just v3) })
-        (JD.at [ "result", "plutusCostModels", "plutus:v1" ] <| JD.list JD.int)
-        (JD.at [ "result", "plutusCostModels", "plutus:v2" ] <| JD.list JD.int)
-        (JD.at [ "result", "plutusCostModels", "plutus:v3" ] <| JD.list JD.int)
-
-
 
 -- #########################################################
 -- VIEW
@@ -601,7 +527,6 @@ view model =
                 (viewLoadedWallet ctx.loadedWallet
                     ++ [ div [] [ text <| "☑️ Picked UTxO: " ++ (ctx.pickedUtxo |> (\u -> Bytes.toHex u.transactionId ++ "#" ++ String.fromInt u.outputIndex)) ]
                        , div [] [ text <| "☑️ Base16 (hex) formatted NFT token name: " ++ Bytes.toHex ctx.tokenName ]
-                       , viewCostModels ctx.costModels
                        , div [] [ text <| "Applied Script hash: " ++ Bytes.toHex ctx.lockScript.hash ]
                        , div [] [ text <| "Applied Script size (bytes): " ++ String.fromInt (Bytes.width ctx.lockScript.compiledCode) ]
                        , viewScriptCbor ctx.lockScript.compiledCode
@@ -672,19 +597,6 @@ viewAvailableWallets wallets =
             div [] [ walletIcon w, text (walletDescription w), connectButton w ]
     in
     div [] (List.map walletRow wallets)
-
-
-viewCostModels : CostModelsState -> Html Msg
-viewCostModels cstMdls =
-    case cstMdls of
-        FetchingCostModels ->
-            div [] [ text "⌛ Fetching cost models..." ]
-
-        CostModelsFailed err ->
-            div [] [ text <| "❌ Failed to fetch cost models: " ++ err ]
-
-        CostModelsLoaded _ ->
-            div [] [ text "✅ Cost models loaded." ]
 
 
 viewScriptCbor : Bytes ScriptCbor -> Html Msg
