@@ -34,8 +34,8 @@ validator gift_card(token_name: ByteArray, utxo_ref: OutputReference) {
         |> dict.to_pairs()
     when rdmr is {
       CheckMint -> {
-        expect Some(_input) =
-          list.find(inputs, fn(input) { input.output_reference == utxo_ref })
+        expect
+          list.any(inputs, fn(input) { input.output_reference == utxo_ref })
         amount == 1 && asset_name == token_name
       }
       CheckBurn -> amount == -1 && asset_name == token_name
