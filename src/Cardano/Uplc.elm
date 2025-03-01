@@ -124,7 +124,7 @@ applyParamsToScript params script =
     let
         jsArguments =
             JE.object
-                [ ( "params", jsEncodeHelper (CE.list Data.toCbor) params )
+                [ ( "params", jsEncodeHelper (CE.list Data.toCborUplc) params )
                 , ( "script", JE.string <| Bytes.toHex script.script )
                 ]
 

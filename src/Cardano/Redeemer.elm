@@ -127,7 +127,7 @@ encodeAsArray =
         E.elems
             >> E.elem encodeTag .tag
             >> E.elem E.int .index
-            >> E.elem Data.toCbor .data
+            >> E.elem Data.toCborUplc .data
             >> E.elem encodeExUnits .exUnits
 
 

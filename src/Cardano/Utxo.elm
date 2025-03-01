@@ -295,7 +295,7 @@ encodeDatumOption datumOption =
             DatumValue datum ->
                 [ E.int 1
                 , datum
-                    |> Data.toCbor
+                    |> Data.toCborUplc
                     |> E.encode
                     |> E.tagged Tag.Cbor E.bytes
                 ]

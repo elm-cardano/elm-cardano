@@ -588,7 +588,7 @@ hashScriptData costModels tx =
         datumsHex =
             tx.witnessSet.plutusData
                 |> Maybe.map
-                    (E.list Data.toCbor
+                    (E.list Data.toCborUplc
                         >> E.encode
                         >> Bytes.fromBytes
                         >> Bytes.toHex
@@ -718,7 +718,7 @@ encodeWitnessSet =
             >> E.optionalField 1 (E.list Script.encodeNativeScript) .nativeScripts
             >> E.optionalField 2 encodeBootstrapWitnesses .bootstrapWitness
             >> E.optionalField 3 (E.list Bytes.toCbor) .plutusV1Script
-            >> E.optionalField 4 (E.list Data.toCbor) .plutusData
+            >> E.optionalField 4 (E.list Data.toCborUplc) .plutusData
             >> E.optionalField 5 encodeRedeemersAsMap .redeemer
             >> E.optionalField 6 (E.list Bytes.toCbor) .plutusV2Script
             >> E.optionalField 7 (E.list Bytes.toCbor) .plutusV3Script
@@ -768,7 +768,7 @@ encodeRedeemersAsMap redeemers =
             )
             (E.tuple <|
                 E.elems
-                    >> E.elem Data.toCbor Tuple.first
+                    >> E.elem Data.toCborUplc Tuple.first
                     >> E.elem Redeemer.encodeExUnits Tuple.second
             )
 
