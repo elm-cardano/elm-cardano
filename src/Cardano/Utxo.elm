@@ -3,8 +3,8 @@ module Cardano.Utxo exposing
     , RefDict, emptyRefDict, refDictFromList
     , fromLovelace, simpleOutput
     , refAsString
-    , lovelace, totalLovelace, compareLovelace, isAdaOnly
-    , minAda, checkMinAda, minAdaForAssets
+    , lovelace, totalLovelace, compareLovelace, isAdaOnly, isAssetsOnly
+    , minAda, checkMinAda, minAdaForAssets, freeAda, bytesWidth
     , encodeOutputReference, encodeOutput, encodeDatumOption
     , decodeOutputReference, decodeOutput
     , outputReferenceToData
@@ -35,12 +35,12 @@ module Cardano.Utxo exposing
 
 ## Query
 
-@docs lovelace, totalLovelace, compareLovelace, isAdaOnly
+@docs lovelace, totalLovelace, compareLovelace, isAdaOnly, isAssetsOnly
 
 
 ## Compute
 
-@docs minAda, checkMinAda, minAdaForAssets
+@docs minAda, checkMinAda, minAdaForAssets, freeAda, bytesWidth
 
 
 ## Convert
@@ -202,6 +202,31 @@ isAdaOnly { amount, datumOption, referenceScript } =
         && (referenceScript == Nothing)
 
 
+{-| Check if the output contains only assets (Ada or tokens).
+Datums and ref scripts are not allowed.
+-}
+isAssetsOnly : Output -> Bool
+isAssetsOnly { datumOption, referenceScript } =
+    (datumOption == Nothing)
+        && (referenceScript == Nothing)
+
+
+{-| Computes the bytes width of the output if we encode it to CBOR.
+-}
+bytesWidth : Output -> Int
+bytesWidth output =
+    E.encode (encodeOutput output)
+        |> ElmBytes.width
+
+
+{-| Amount of Ada Lovelace "free" in the output,
+meaning the amount above the minimum required for the output.
+-}
+freeAda : Output -> Natural
+freeAda output =
+    N.sub output.amount.lovelace <| minAda output
+
+
 {-| Compute minimum Ada lovelace for a given [Output].
 
 Since the size of the lovelace field may impact minAda,
@@ -224,9 +249,7 @@ minAda ({ amount } as output) =
             else
                 output
     in
-    E.encode (encodeOutput updatedOutput)
-        |> ElmBytes.width
-        |> (\w -> N.fromSafeInt ((160 + w) * 4310))
+    N.fromSafeInt ((160 + bytesWidth updatedOutput) * 4310)
 
 
 {-| Check that an [Output] has enough ada to cover its size.

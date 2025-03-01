@@ -1,6 +1,6 @@
 module Cardano.CoinSelection exposing
     ( Context, Error(..), Selection, Algorithm
-    , largestFirst
+    , largestFirst, inOrderedList
     )
 
 {-| Module `Cardano.CoinSelection` provides functionality for performing
@@ -16,7 +16,7 @@ selection algorithm as described in CIP2 (<https://cips.cardano.org/cips/cip2/>)
 
 # Strategies
 
-@docs largestFirst
+@docs largestFirst, inOrderedList
 
 -}
 
@@ -55,6 +55,75 @@ type alias Context =
 -}
 type alias Algorithm =
     Int -> Context -> Result Error Selection
+
+
+{-| Implements the simplest coin selection algorithm,
+which just adds UTxOs until the target amount is reached.
+
+Takes a `Context` record containing the available UTXOs, initially
+selected UTXOs, requested outputs, and change address, along with an `Int`
+representing the maximum number of inputs allowed. Returns either a
+`Error` or a `Selection`.
+
+TODO: if possible, remove extraneous inputs.
+Indeed, when selecting later CNT, they might contain enough previous CNT too.
+
+-}
+inOrderedList : Algorithm
+inOrderedList maxInputCount context =
+    let
+        targetLovelace =
+            Value.onlyLovelace context.targetAmount.lovelace
+
+        -- Split targetAmount into individual tokens
+        targetAssets : List ( Bytes PolicyId, Bytes AssetName, Natural )
+        targetAssets =
+            MultiAsset.split context.targetAmount.assets
+    in
+    -- Select for Ada first
+    accumOutputsUntilDone
+        { maxInputCount = maxInputCount
+        , selectedInputCount = List.length context.alreadySelectedUtxos
+        , accumulatedAmount = Value.sum (List.map (Tuple.second >> .amount) context.alreadySelectedUtxos)
+        , targetAmount = targetLovelace
+        , availableOutputs = context.availableUtxos
+        , selectedOutputs = context.alreadySelectedUtxos
+        }
+        -- Then select for each token
+        |> inOrderedListIter targetAssets
+        |> Result.map
+            (\state ->
+                { selectedUtxos = state.selectedOutputs
+                , change =
+                    if state.accumulatedAmount == context.targetAmount then
+                        Nothing
+
+                    else
+                        Just (Value.substract state.accumulatedAmount context.targetAmount |> Value.normalize)
+                }
+            )
+
+
+{-| Apply in-order selection for each token successively.
+-}
+inOrderedListIter :
+    List ( Bytes PolicyId, Bytes AssetName, Natural )
+    -> Result Error SelectionState
+    -> Result Error SelectionState
+inOrderedListIter targets stateResult =
+    case ( stateResult, targets ) of
+        ( Err _, _ ) ->
+            stateResult
+
+        ( _, [] ) ->
+            stateResult
+
+        ( Ok state, ( policyId, name, amount ) :: others ) ->
+            let
+                newState =
+                    { state | targetAmount = Value.onlyToken policyId name amount }
+            in
+            inOrderedListIter others (accumOutputsUntilDone newState)
 
 
 {-| Implements the Largest-First coin selection algorithm as described in CIP2.
