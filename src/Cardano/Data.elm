@@ -93,7 +93,7 @@ toCborUplc data =
                     E.length 0
 
                 _ ->
-                    E.indefiniteList toCbor xs
+                    EE.indefiniteList toCbor xs
     in
     case data of
         Constr ixNat fields ->
@@ -132,7 +132,7 @@ toCborUplc data =
 
             else
                 E.sequence <|
-                    E.beginBytes
+                    EE.beginBytes
                         :: List.foldr
                             (\chunk rest -> E.bytes (Bytes.toBytes chunk) :: rest)
                             [ E.break ]
