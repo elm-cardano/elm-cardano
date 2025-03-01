@@ -215,7 +215,7 @@ update msg model =
         ( GotBlueprint result, WalletLoaded w _ ) ->
             case result of
                 Ok lockScript ->
-                    ( BlueprintLoaded w lockScript) { errors = "" }, Cmd.none )
+                    ( BlueprintLoaded w lockScript { errors = "" }, Cmd.none )
 
                 Err err ->
                     -- Handle error as needed
