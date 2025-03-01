@@ -466,14 +466,11 @@ makeMintBurnIntent lockScript tokenName forMint =
                 { script = ( PlutusV3, WitnessValue lockScript.compiledCode )
                 , redeemerData =
                     \_ ->
-                        Data.Constr
-                            (if forMint then
-                                Natural.zero
+                        if forMint then
+                            Data.Constr Natural.zero []
 
-                             else
-                                Natural.one
-                            )
-                            []
+                        else
+                            Data.Constr Natural.one []
                 , requiredSigners = []
                 }
         }
