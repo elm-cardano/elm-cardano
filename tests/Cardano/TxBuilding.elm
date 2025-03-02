@@ -378,7 +378,8 @@ okTxBuilding =
                 }
 
             localStateUtxos =
-                [ makeAdaOutput 0 testAddr.me 5
+                [ makeAdaOutput 0 testAddr.me 14
+                , makeAdaOutput 1 testAddr.me 8
                 , ( utxoBeingSpent, makeLockedOutput <| Value.onlyLovelace <| ada 4 )
                 ]
           in
@@ -416,16 +417,16 @@ okTxBuilding =
                                 , requiredSigners = [ myKeyCred ]
                                 , outputs =
                                     [ makeLockedOutput <| Value.onlyLovelace <| ada 2
-                                    , Utxo.fromLovelace testAddr.me (ada 5)
+                                    , Utxo.fromLovelace testAddr.me (ada 14)
                                     ]
 
                                 -- script stuff
                                 , scriptDataHash = tx.body.scriptDataHash
 
-                                -- collateral would cost 3 ada for 2 ada fees, so return 5-3=2 ada
-                                , collateral = [ makeRef "0" 0 ]
+                                -- collateral would cost 3 ada for 2 ada fees, so return 8-3=5 ada
+                                , collateral = [ makeRef "1" 1 ]
                                 , totalCollateral = Just 3000000
-                                , collateralReturn = Just (Utxo.fromLovelace testAddr.me (ada 2))
+                                , collateralReturn = Just (Utxo.fromLovelace testAddr.me (ada 5))
                             }
                         , witnessSet =
                             { newWitnessSet
