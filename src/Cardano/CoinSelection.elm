@@ -65,6 +65,8 @@ selected UTXOs, requested outputs, and change address, along with an `Int`
 representing the maximum number of inputs allowed. Returns either a
 `Error` or a `Selection`.
 
+Remark: the selected UTxOs are returned in reverse order for efficiency of list construction.
+
 TODO: if possible, remove extraneous inputs.
 Indeed, when selecting later CNT, they might contain enough previous CNT too.
 
