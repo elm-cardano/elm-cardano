@@ -39,6 +39,10 @@ struct MakeSubCommand {
     /// specify the name of the resulting JS file.
     output: String,
 
+    #[argh(option)]
+    /// specify a format for compiler messages: "normal" or "json"
+    report: Option<String>,
+
     #[argh(switch)]
     /// turn on the time-travelling debugger. It allows you to rewind and replay events.
     /// The events can be imported/exported into a file,
@@ -145,6 +149,11 @@ fn make_subcommand(make_args: MakeSubCommand) -> anyhow::Result<()> {
     // Add optimize flag if set
     if make_args.optimize {
         cmd.arg("--optimize");
+    }
+
+    // Add report format if specified
+    if let Some(report_value) = &make_args.report {
+        cmd.arg("--report").arg(report_value);
     }
 
     // Execute the command and stream output
