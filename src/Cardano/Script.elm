@@ -2,7 +2,7 @@ module Cardano.Script exposing
     ( Script(..), NativeScript(..), PlutusScript, PlutusVersion(..), ScriptCbor, extractSigners, hash, fromBech32, toBech32
     , Reference, refFromBytes, refFromScript, refBytes, refScript, refHash
     , toCbor, encodeNativeScript, encodePlutusScript
-    , fromCbor, decodeNativeScript
+    , fromCbor, decodeNativeScript, jsonDecodeNativeScript
     )
 
 {-| Script
@@ -19,13 +19,12 @@ module Cardano.Script exposing
 
 ## Decoders
 
-@docs fromCbor, decodeNativeScript
+@docs fromCbor, decodeNativeScript, jsonDecodeNativeScript
 
 -}
 
 import Bech32.Decode as Bech32
 import Bech32.Encode as Bech32
-import Blake2b exposing (blake2b224)
 import Bytes.Comparable as Bytes exposing (Bytes)
 import Cardano.Address exposing (CredentialHash)
 import Cbor.Decode as D
@@ -33,6 +32,7 @@ import Cbor.Decode.Extra as D
 import Cbor.Encode as E
 import Cbor.Encode.Extra as EE
 import Dict exposing (Dict)
+import Json.Decode as JD
 import Natural exposing (Natural)
 
 
@@ -67,9 +67,7 @@ refFromBytes bytes =
         ( Just script, Just taggedScriptBytes ) ->
             Just <|
                 Reference
-                    { scriptHash =
-                        blake2b224 Nothing (Bytes.toU8 taggedScriptBytes)
-                            |> Bytes.fromU8
+                    { scriptHash = Bytes.blake2b224 taggedScriptBytes
                     , bytes = bytes
                     , script = script
                     }
@@ -201,14 +199,10 @@ This is not valid CBOR, just concatenation of tag|scriptBytes.
 -}
 hash : Script -> Bytes CredentialHash
 hash script =
-    let
-        taggedScriptBytes =
-            taggedEncoder script
-                |> E.encode
-                |> Bytes.fromBytes
-    in
-    blake2b224 Nothing (Bytes.toU8 taggedScriptBytes)
-        |> Bytes.fromU8
+    taggedEncoder script
+        |> E.encode
+        |> Bytes.fromBytes
+        |> Bytes.blake2b224
 
 
 {-| Convert a script hash to its Bech32 representation.
@@ -382,4 +376,64 @@ decodeNativeScript =
 
                     _ ->
                         D.fail
+            )
+
+
+{-| Decode NativeScript from its JSON node specification.
+
+<https://github.com/IntersectMBO/cardano-node/blob/40ebadd4b70530f89fe76513c108a1a356ad16ea/doc/reference/simple-scripts.md#type-after>
+
+-}
+jsonDecodeNativeScript : JD.Decoder NativeScript
+jsonDecodeNativeScript =
+    let
+        sig =
+            JD.field "keyHash" JD.string
+                |> JD.andThen
+                    (\hashHex ->
+                        case Bytes.fromHex hashHex of
+                            Nothing ->
+                                JD.fail <| "Invalid key hash: " ++ hashHex
+
+                            Just scriptHash ->
+                                JD.succeed <| ScriptPubkey scriptHash
+                    )
+    in
+    JD.field "type" JD.string
+        |> JD.andThen
+            (\nodeType ->
+                case nodeType of
+                    "sig" ->
+                        sig
+
+                    "all" ->
+                        JD.field "scripts" <|
+                            JD.map ScriptAll <|
+                                JD.lazy (\_ -> JD.list jsonDecodeNativeScript)
+
+                    "any" ->
+                        JD.field "scripts" <|
+                            JD.map ScriptAny <|
+                                JD.list (JD.lazy (\_ -> jsonDecodeNativeScript))
+
+                    "atLeast" ->
+                        JD.map2 ScriptNofK
+                            (JD.field "required" JD.int)
+                            (JD.field "scripts" <| JD.list (JD.lazy (\_ -> jsonDecodeNativeScript)))
+
+                    -- TODO: is this actually the reverse of the CBOR???
+                    "after" ->
+                        JD.field "slot" JD.int
+                            -- TODO: can we fix this to also be correct with numbers bigger than 2^53?
+                            -- Unlikely error considering slots are in seconds (not milliseconds)?
+                            |> JD.map (InvalidBefore << Natural.fromSafeInt)
+
+                    "before" ->
+                        JD.field "slot" JD.int
+                            -- TODO: can we fix this to also be correct with numbers bigger than 2^53?
+                            -- Unlikely error considering slots are in seconds (not milliseconds)?
+                            |> JD.map (InvalidHereafter << Natural.fromSafeInt)
+
+                    _ ->
+                        JD.fail <| "Unknown type: " ++ nodeType
             )

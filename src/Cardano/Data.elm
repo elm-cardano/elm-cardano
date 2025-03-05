@@ -1,8 +1,8 @@
-module Cardano.Data exposing (Data(..), fromCbor, toCbor)
+module Cardano.Data exposing (Data(..), fromCbor, toCbor, toCborUplc)
 
 {-| Handling Cardano Data objects.
 
-@docs Data, fromCbor, toCbor
+@docs Data, fromCbor, toCbor, toCborUplc
 
 -}
 
@@ -58,6 +58,70 @@ toCbor data =
 
         List xs ->
             E.list toCbor xs
+
+        Int i ->
+            EE.integer i
+
+        Bytes bytes ->
+            if Bytes.width bytes <= 64 then
+                E.bytes (Bytes.toBytes bytes)
+
+            else
+                E.sequence <|
+                    EE.beginBytes
+                        :: List.foldr
+                            (\chunk rest -> E.bytes (Bytes.toBytes chunk) :: rest)
+                            [ E.break ]
+                            (Bytes.chunksOf 64 bytes)
+
+
+{-| CBOR encoder for [Data].
+Only to be used for things sent to the UPLC VM,
+such as datums, redeemers, and script parameter application.
+-}
+toCborUplc : Data -> E.Encoder
+toCborUplc data =
+    let
+        -- NOTE: 'Data' lists are weirdly encoded:
+        --
+        -- 1. They are encoded as definite empty lists (0x80)
+        -- 2. But, are encoded as indefinite list otherwise.
+        encodeList : List Data -> E.Encoder
+        encodeList xs =
+            case xs of
+                [] ->
+                    E.length 0
+
+                _ ->
+                    EE.indefiniteList toCbor xs
+    in
+    case data of
+        Constr ixNat fields ->
+            if ixNat |> Natural.isLessThan (Natural.fromSafeInt 128) then
+                let
+                    ix =
+                        Natural.toInt ixNat
+                in
+                if ix < 7 then
+                    E.tagged (Tag.Unknown <| 121 + ix) encodeList fields
+
+                else
+                    E.tagged (Tag.Unknown <| 1280 + ix - 7) encodeList fields
+
+            else
+                E.tagged (Tag.Unknown 102)
+                    (E.tuple <|
+                        E.elems
+                            >> E.elem EE.natural .ixNat
+                            >> E.elem encodeList .fields
+                    )
+                    { ixNat = ixNat, fields = fields }
+
+        Map xs ->
+            EE.associativeList toCbor toCbor xs
+
+        List xs ->
+            encodeList xs
 
         Int i ->
             EE.integer i

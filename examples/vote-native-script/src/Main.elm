@@ -1,27 +1,23 @@
 port module Main exposing (main)
 
-import Blake2b exposing (blake2b224)
 import Browser
 import Bytes.Comparable as Bytes exposing (Bytes)
-import Cardano exposing (CertificateIntent(..), CredentialWitness(..), Fee(..), ScriptWitness(..), SpendSource(..), TxIntent(..), VoterWitness(..), WitnessSource(..), dummyBytes)
+import Cardano exposing (CertificateIntent(..), CredentialWitness(..), Fee(..), ScriptWitness(..), SpendSource(..), TxIntent(..), VoterWitness(..), WitnessSource(..))
 import Cardano.Address as Address exposing (Address, Credential(..), CredentialHash, NetworkId(..), StakeCredential(..))
 import Cardano.Cip30 as Cip30
 import Cardano.CoinSelection as CoinSelection
-import Cardano.Data as Data
-import Cardano.Gov as Gov exposing (ActionId, CostModels, Drep(..), Vote(..))
-import Cardano.Script as Script exposing (NativeScript(..), PlutusVersion(..), ScriptCbor)
+import Cardano.Gov exposing (ActionId, CostModels, Drep(..), Vote(..))
+import Cardano.Script as Script exposing (NativeScript(..), PlutusVersion(..))
 import Cardano.Transaction as Transaction exposing (Transaction)
 import Cardano.Uplc as Uplc
 import Cardano.Utxo as Utxo exposing (DatumOption(..), Output, OutputReference, TransactionId)
 import Cardano.Value
 import Cbor.Encode
 import Dict.Any
-import Hex.Convert
 import Html exposing (Html, button, div, text)
 import Html.Attributes exposing (height, src)
 import Html.Events exposing (onClick)
 import Http
-import Integer
 import Json.Decode as JD exposing (Decoder, Value)
 import Json.Encode as JE
 import Natural exposing (Natural)
@@ -113,9 +109,9 @@ completeStartup s =
                 -- Remark: to do it properly, we should return an error if the stake cred is not a vkey hash
                 ( myKeyCred, myStakeKeyHash ) =
                     ( Address.extractPubKeyHash changeAddress
-                        |> Maybe.withDefault (dummyBytes 28 "ERROR")
+                        |> Maybe.withDefault (Bytes.dummy 28 "ERROR")
                     , Address.extractStakeKeyHash changeAddress
-                        |> Maybe.withDefault (dummyBytes 28 "ERROR")
+                        |> Maybe.withDefault (Bytes.dummy 28 "ERROR")
                     )
 
                 -- Generate native script that checks stake credential
@@ -226,17 +222,6 @@ proposalsDecoder =
 
 
 
--- Helper
-
-
-encodeCborHex : Cbor.Encode.Encoder -> Value
-encodeCborHex cborEncoder =
-    Cbor.Encode.encode cborEncoder
-        |> Hex.Convert.toString
-        |> JE.string
-
-
-
 -- #########################################################
 -- UPDATE
 -- #########################################################
@@ -317,7 +302,7 @@ update msg model =
                     )
 
                 -- We just received the utxos
-                Ok (Cip30.ApiResponse { walletId } (Cip30.WalletUtxos utxos)) ->
+                Ok (Cip30.ApiResponse _ (Cip30.WalletUtxos utxos)) ->
                     let
                         newState =
                             { state | walletUtxos = Just utxos }
@@ -327,7 +312,7 @@ update msg model =
                         |> Maybe.withDefault ( Startup newState, Cmd.none )
 
                 -- Received the wallet change address
-                Ok (Cip30.ApiResponse { walletId } (Cip30.ChangeAddress address)) ->
+                Ok (Cip30.ApiResponse _ (Cip30.ChangeAddress address)) ->
                     let
                         newState =
                             { state | walletChangeAddress = Just address }
@@ -379,7 +364,7 @@ update msg model =
                     , toWallet (Cip30.encodeRequest (Cip30.submitTx loadedWallet.wallet signedTx))
                     )
 
-                Ok (Cip30.ApiResponse { walletId } (Cip30.SubmittedTx txId)) ->
+                Ok (Cip30.ApiResponse _ (Cip30.SubmittedTx txId)) ->
                     let
                         -- Update the known UTxOs set after the given Tx is processed
                         { updatedState, spent, created } =
@@ -434,7 +419,7 @@ update msg model =
                     ( model, Cmd.none )
 
         -- Fee provider signatures
-        ( ExternalAppMsg value, FeeProviderSigning ({ loadedWallet } as ctx) { tx, errors } ) ->
+        ( ExternalAppMsg value, FeeProviderSigning ctx { tx } ) ->
             case JD.decodeValue externalAppResponseDecoder value of
                 Ok (GotSignature witnesses) ->
                     let
@@ -457,7 +442,7 @@ update msg model =
                     ( model, Cmd.none )
 
         ( SkipRegisterButtonClicked, Initialized context _ ) ->
-            ( TxSubmitted context RegisteringDRep { txId = Cardano.dummyBytes 32 "", errors = "" }
+            ( TxSubmitted context RegisteringDRep { txId = Bytes.dummy 32 "", errors = "" }
             , Cmd.none
             )
 
@@ -466,8 +451,11 @@ update msg model =
                 -- Create registration certificate for the script address as DRep
                 regDRepTxAttempt =
                     [ Spend <|
-                        FromWallet ctx.loadedWallet.changeAddress <|
-                            Cardano.Value.onlyLovelace ctx.protocolParams.drepDeposit
+                        FromWallet
+                            { address = ctx.loadedWallet.changeAddress
+                            , value = Cardano.Value.onlyLovelace ctx.protocolParams.drepDeposit
+                            , guaranteedUtxos = []
+                            }
                     , IssueCertificate <|
                         RegisterDrep
                             { drep =
@@ -712,7 +700,7 @@ view model =
                 , displayErrors <| String.join "\n" errors
                 ]
 
-        Submitting { loadedWallet } action { tx, errors } ->
+        Submitting { loadedWallet } action { errors } ->
             div []
                 [ viewLoadedWallet loadedWallet
                 , div [] [ text <| "Signing and submitting the " ++ Debug.toString action ++ " transaction ..." ]
@@ -750,7 +738,7 @@ view model =
                 , displayErrors errors
                 ]
 
-        FeeProviderSigning { loadedWallet } { tx, errors } ->
+        FeeProviderSigning { loadedWallet } { errors } ->
             div []
                 [ viewLoadedWallet loadedWallet
                 , div [] [ text <| "Signing transaction with the fee provider ..." ]
@@ -794,7 +782,7 @@ viewMaybeWallet { walletsDiscovered, wallet, walletUtxos, walletChangeAddress, f
                         Nothing ->
                             div [] [ text "Loading fee provider ..." ]
 
-                        Just { address, utxos } ->
+                        Just { address } ->
                             div [] [ text <| "Fee provider address: " ++ (Address.toBytes address |> Bytes.toHex) ]
             in
             div []

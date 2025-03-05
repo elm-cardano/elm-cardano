@@ -5,8 +5,9 @@ module Cardano.Transaction exposing
     , Update
     , ScriptContext, ScriptPurpose(..)
     , Certificate(..), GenesisHash, GenesisDelegateHash, RewardSource(..), RewardTarget(..), MoveInstantaneousReward
-    , VKeyWitness, BootstrapWitness, Ed25519PublicKey, Ed25519Signature, BootstrapWitnessChainCode, BootstrapWitnessAttributes
-    , FeeParameters, RefScriptFeeParameters, defaultTxFeeParams, computeFees, allInputs
+    , VKeyWitness, hashVKey, BootstrapWitness, Ed25519PublicKey, Ed25519Signature, BootstrapWitnessChainCode, BootstrapWitnessAttributes
+    , FeeParameters, RefScriptFeeParameters, defaultTxFeeParams, computeFees, computeRefScriptFee, computeScriptExecFee, computeTxSizeFee, estimateRefScriptFeeSavings
+    , allInputs
     , computeTxId, locateScriptWithHash
     , updateSignatures, hashScriptData
     , deserialize, serialize, encodeToCbor
@@ -27,9 +28,11 @@ module Cardano.Transaction exposing
 
 @docs Certificate, GenesisHash, GenesisDelegateHash, RewardSource, RewardTarget, MoveInstantaneousReward
 
-@docs VKeyWitness, BootstrapWitness, Ed25519PublicKey, Ed25519Signature, BootstrapWitnessChainCode, BootstrapWitnessAttributes
+@docs VKeyWitness, hashVKey, BootstrapWitness, Ed25519PublicKey, Ed25519Signature, BootstrapWitnessChainCode, BootstrapWitnessAttributes
 
-@docs FeeParameters, RefScriptFeeParameters, defaultTxFeeParams, computeFees, allInputs
+@docs FeeParameters, RefScriptFeeParameters, defaultTxFeeParams, computeFees, computeRefScriptFee, computeScriptExecFee, computeTxSizeFee, estimateRefScriptFeeSavings
+
+@docs allInputs
 
 @docs computeTxId, locateScriptWithHash
 
@@ -41,7 +44,6 @@ module Cardano.Transaction exposing
 
 -}
 
-import Blake2b exposing (blake2b256)
 import Bytes.Comparable as Bytes exposing (Bytes)
 import Bytes.Map exposing (BytesMap)
 import Cardano.Address as Address exposing (Credential, CredentialHash, NetworkId(..), StakeAddress, decodeCredential)
@@ -51,7 +53,7 @@ import Cardano.Gov as Gov exposing (ActionId, Anchor, CostModels, Drep, Proposal
 import Cardano.MultiAsset as MultiAsset exposing (MultiAsset, PolicyId)
 import Cardano.Pool as Pool exposing (VrfKeyHash)
 import Cardano.Redeemer as Redeemer exposing (ExUnitPrices, Redeemer)
-import Cardano.Script as Script exposing (NativeScript, ScriptCbor)
+import Cardano.Script as Script exposing (NativeScript, Script, ScriptCbor)
 import Cardano.Utils exposing (RationalNumber)
 import Cardano.Utxo as Utxo exposing (Output, OutputReference, TransactionId, encodeOutput, encodeOutputReference)
 import Cbor.Decode as D
@@ -196,6 +198,13 @@ type alias VKeyWitness =
     { vkey : Bytes Ed25519PublicKey -- 0
     , signature : Bytes Ed25519Signature -- 1
     }
+
+
+{-| Compute the 28-bytes Blake2b hash of a public key.
+-}
+hashVKey : Bytes Ed25519PublicKey -> Bytes CredentialHash
+hashVKey =
+    Bytes.blake2b224
 
 
 {-| Bootstrap witness
@@ -380,11 +389,28 @@ type alias RefScriptFeeParameters =
 {-| Re-compute fees for a transaction (does not read `body.fee`).
 -}
 computeFees : FeeParameters -> { refScriptBytes : Int } -> Transaction -> { txSizeFee : Natural, scriptExecFee : Natural, refScriptSizeFee : Natural }
-computeFees { baseFee, feePerByte, scriptExUnitPrice, refScriptFeeParams } { refScriptBytes } tx =
-    let
-        txSize =
-            Bytes.width (serialize tx)
+computeFees ({ scriptExUnitPrice, refScriptFeeParams } as feeParams) { refScriptBytes } tx =
+    { txSizeFee = computeTxSizeFee feeParams tx
+    , scriptExecFee = computeScriptExecFee scriptExUnitPrice tx
+    , refScriptSizeFee = computeRefScriptFee refScriptFeeParams refScriptBytes
+    }
 
+
+{-| Compute the part of the fees of a Transaction directly related to the Tx size in bytes.
+
+The "baseFee" and "feePerByte" are network parameters.
+
+-}
+computeTxSizeFee : { a | baseFee : Int, feePerByte : Int } -> Transaction -> Natural
+computeTxSizeFee { baseFee, feePerByte } tx =
+    Natural.fromSafeInt (baseFee + feePerByte * (Bytes.width <| serialize tx))
+
+
+{-| Compute the part of the fees of a Transaction related to the execution of scripts in the Plutus VM.
+-}
+computeScriptExecFee : ExUnitPrices -> Transaction -> Natural
+computeScriptExecFee { stepPrice, memPrice } tx =
+    let
         ( totalSteps, totalMem ) =
             tx.witnessSet.redeemer
                 |> Maybe.withDefault []
@@ -397,19 +423,16 @@ computeFees { baseFee, feePerByte, scriptExUnitPrice, refScriptFeeParams } { ref
                     ( Natural.zero, Natural.zero )
 
         totalStepsCost =
-            Natural.mul totalSteps (Natural.fromSafeInt scriptExUnitPrice.stepPrice.numerator)
-                |> Natural.divBy (Natural.fromSafeInt scriptExUnitPrice.stepPrice.denominator)
+            Natural.mul totalSteps (Natural.fromSafeInt stepPrice.numerator)
+                |> Natural.divBy (Natural.fromSafeInt stepPrice.denominator)
                 |> Maybe.withDefault Natural.zero
 
         totalMemCost =
-            Natural.mul totalMem (Natural.fromSafeInt scriptExUnitPrice.memPrice.numerator)
-                |> Natural.divBy (Natural.fromSafeInt scriptExUnitPrice.memPrice.denominator)
+            Natural.mul totalMem (Natural.fromSafeInt memPrice.numerator)
+                |> Natural.divBy (Natural.fromSafeInt memPrice.denominator)
                 |> Maybe.withDefault Natural.zero
     in
-    { txSizeFee = Natural.fromSafeInt (baseFee + feePerByte * txSize)
-    , scriptExecFee = Natural.add totalStepsCost totalMemCost
-    , refScriptSizeFee = refScriptFee refScriptFeeParams refScriptBytes
-    }
+    Natural.add totalStepsCost totalMemCost
 
 
 {-| Helper function to compute the fees associated with reference script size.
@@ -432,8 +455,8 @@ tierRefScriptFee = go 0 minFeeRefScriptCostPerByte
 ```
 
 -}
-refScriptFee : RefScriptFeeParameters -> Int -> Natural
-refScriptFee ({ minFeeRefScriptCostPerByte } as p) refScriptBytes =
+computeRefScriptFee : RefScriptFeeParameters -> Int -> Natural
+computeRefScriptFee ({ minFeeRefScriptCostPerByte } as p) refScriptBytes =
     let
         baseTierPricePerByte =
             RationalNat.fromSafeInt minFeeRefScriptCostPerByte
@@ -465,6 +488,38 @@ refScriptFeeHelper p { bytesLeft, tierPricePerByte } costAccum =
             newCostAccum
 
 
+{-| Estimate the potential saving in transaction fees by passing a script by reference
+instead of putting inline in the Tx witnesses.
+-}
+estimateRefScriptFeeSavings : Script -> Int
+estimateRefScriptFeeSavings script =
+    let
+        refScriptOutputRef =
+            { transactionId = Bytes.dummy 32 "", outputIndex = 0 }
+
+        refScript =
+            Script.refFromScript script
+
+        txWithRefScript =
+            { new | body = { newBody | referenceInputs = [ refScriptOutputRef ] } }
+
+        txWithInlineScript =
+            case script of
+                Script.Native nativeScript ->
+                    { new | witnessSet = { newWitnessSet | nativeScripts = Just [ nativeScript ] } }
+
+                Script.Plutus plutusScript ->
+                    { new | witnessSet = { newWitnessSet | plutusV3Script = Just [ plutusScript.script ] } }
+
+        feesWithoutExecution tx =
+            Natural.add
+                (computeTxSizeFee defaultTxFeeParams tx)
+                (computeRefScriptFee defaultTxFeeParams.refScriptFeeParams <| Bytes.width (Script.refBytes refScript))
+    in
+    (Natural.toInt <| feesWithoutExecution txWithInlineScript)
+        - (Natural.toInt <| feesWithoutExecution txWithRefScript)
+
+
 {-| Extract all inputs that are used in the transaction,
 from inputs, collateral and reference inputs.
 -}
@@ -483,14 +538,9 @@ allInputs tx =
 -}
 computeTxId : Transaction -> Bytes TransactionId
 computeTxId tx =
-    let
-        bodyBytes =
-            E.encode (encodeTransactionBody tx.body)
-                |> Bytes.fromBytes
-    in
-    Bytes.toU8 bodyBytes
-        |> blake2b256 Nothing
-        |> Bytes.fromU8
+    E.encode (encodeTransactionBody tx.body)
+        |> Bytes.fromBytes
+        |> Bytes.blake2b256
 
 
 {-| Helper function to locate the index of a script within a list of Outputs.
@@ -538,7 +588,7 @@ hashScriptData costModels tx =
         datumsHex =
             tx.witnessSet.plutusData
                 |> Maybe.map
-                    (E.list Data.toCbor
+                    (E.list Data.toCborUplc
                         >> E.encode
                         >> Bytes.fromBytes
                         >> Bytes.toHex
@@ -548,9 +598,7 @@ hashScriptData costModels tx =
     case tx.witnessSet.redeemer of
         Nothing ->
             Bytes.fromHexUnchecked ("80" ++ datumsHex ++ "a0")
-                |> Bytes.toU8
-                |> blake2b256 Nothing
-                |> Bytes.fromU8
+                |> Bytes.blake2b256
 
         Just redeemers ->
             let
@@ -580,9 +628,7 @@ hashScriptData costModels tx =
                         |> Bytes.toHex
             in
             Bytes.fromHexUnchecked (redeemersHex ++ datumsHex ++ languageViewsHex)
-                |> Bytes.toU8
-                |> blake2b256 Nothing
-                |> Bytes.fromU8
+                |> Bytes.blake2b256
 
 
 
@@ -672,7 +718,7 @@ encodeWitnessSet =
             >> E.optionalField 1 (E.list Script.encodeNativeScript) .nativeScripts
             >> E.optionalField 2 encodeBootstrapWitnesses .bootstrapWitness
             >> E.optionalField 3 (E.list Bytes.toCbor) .plutusV1Script
-            >> E.optionalField 4 (E.list Data.toCbor) .plutusData
+            >> E.optionalField 4 (E.list Data.toCborUplc) .plutusData
             >> E.optionalField 5 encodeRedeemersAsMap .redeemer
             >> E.optionalField 6 (E.list Bytes.toCbor) .plutusV2Script
             >> E.optionalField 7 (E.list Bytes.toCbor) .plutusV3Script
@@ -722,7 +768,7 @@ encodeRedeemersAsMap redeemers =
             )
             (E.tuple <|
                 E.elems
-                    >> E.elem Data.toCbor Tuple.first
+                    >> E.elem Data.toCborUplc Tuple.first
                     >> E.elem Redeemer.encodeExUnits Tuple.second
             )
 

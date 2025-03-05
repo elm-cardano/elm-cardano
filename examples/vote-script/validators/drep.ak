@@ -17,21 +17,21 @@ validator drep_voting {
     list.has(self.extra_signatories, owner)?
   }
 
-  publish(_redeemer: Data, certificate: Certificate, self: Transaction) {
+  publish(_redeemer: Data, certificate: Certificate, _self: Transaction) {
     when certificate is {
-      RegisterDelegateRepresentative { delegate_representative, deposit } ->
+      RegisterDelegateRepresentative { .. } ->
         // todo @"register"
         True
-      UnregisterDelegateRepresentative { delegate_representative, refund } ->
+      UnregisterDelegateRepresentative { .. } ->
         // todo @"unregister"
         True
       _ -> fail
     }
   }
 
-  vote(_redeemer: Data, voter: Voter, self: Transaction) {
+  vote(_redeemer: Data, voter: Voter, _self: Transaction) {
     when voter is {
-      DelegateRepresentative(cred) ->
+      DelegateRepresentative(_) ->
         // todo @"drep"
         True
       _ -> fail

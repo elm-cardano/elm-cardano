@@ -43,13 +43,15 @@ Install the elm-cardano CLI and the Elm package.
 # Install the elm compiler and the elm-cardano CLI
 npm install -g elm elm-cardano
 
-# (Temporary) clone the elm-cardano repo to expose its elm modules
-# This step won’t be necessary when the elm package will be published
-git clone --depth 1 --branch v0.1.6 https://github.com/elm-cardano/elm-cardano.git
-
 # Initialize a template project in the elm-cardano-starter/ folder
 mkdir elm-cardano-starter && cd elm-cardano-starter
 npx elm-cardano init
+git init . && git add . && git commit -m "Initial commit"
+
+# (temporary) Clone the elm-cardano repo (release branch) to expose its elm modules
+# This step won’t be necessary when the elm package will be published
+git submodule add -b release https://github.com/elm-cardano/elm-cardano.git
+git commit -am "Add elm-cardano as a submodule"
 ```
 
 This will generate the following template structure:
@@ -58,6 +60,7 @@ This will generate the following template structure:
 elm.json     # the elm app config
 index.html   # the app web page
 src/Main.elm # the elm app
+elm-cardano/ # the elm-cardano package
 ```
 
 Now you simply need to compile the elm app and start a static server.
@@ -73,21 +76,39 @@ More examples are available in the `examples/` dir of the repo.
 More information about this project is also available
 in the different documents in the `docs/` dir of the repo.
 
+## Adding elm-cardano to an existing Elm project
+
+If you have an already existing Elm project,
+instructions are in the `docs/from-elm-to-elm-cardano.md` file.
+
+## FAQ
+
+There is a dedicated `docs/FAQ.md` file, answering questions like:
+
+- Why is there an elm-cardano binary?
+- Why isn’t the elm-cardano package published?
+- Why isn’t it possible to compile with --optimize?
+- Why does elm-cardano have its own JS loader?
+- What is the interop story with other JS tools?
+- Does elm-cardano have an emulator?
+- Is elm-cardano usable with a local testnet?
+- How to use an API provider with elm-cardano?
+- Is elm-cardano usable in the Backend?
+
 ## Contributions
 
 Contributions are very welcomed! For now things are moving fast so I suggest
-discussing first over [TxPipe discord][txpipe-discord], in the
+discussing first over in the
 [#elm][elm-cardano-channel] channel.
 
-[txpipe-discord]: https://discord.gg/ZTHcHUy5HY
-[elm-cardano-channel]: https://discord.com/channels/946071061567529010/1168602442657697793
+[elm-cardano-channel]: https://discord.gg/UgXYyy9dHg
 
 The elm-cardano cli is built using the rust language.
 To build successfully, it attempts to statically load the WASM files for Aiken UPLC virtual machine.
 So we first need to download these files locally, then we can compile (in release).
 ```sh
 # Download the uplc-wasm archive
-curl -LO 'https://github.com/mpizenberg/uplc-wasm/releases/download/v0.2.0/my-artifact.zip'
+curl -LO 'https://github.com/mpizenberg/uplc-wasm/releases/download/v0.3.0/my-artifact.zip'
 unzip my-artifact.zip -d cli/pkg-uplc-wasm
 
 # Build the elm-cardano cli
@@ -121,3 +142,32 @@ cd examples/txbuild && npx elm-watch hot
 
 Many thanks to all people who contributed code and ideas to elm-cardano.
 Many thanks to the person (they know who they are) who contributed the logo.
+
+## Maintainer notes
+
+Cargo-dist TLDR:
+```sh
+git commit -am "release: 0.2.0"
+git tag "v0.2.0"
+git push
+git push --tags
+```
+
+Then download, extract and publish the npm package from the GitHub release page.
+```sh
+# Inside the extracted package/ dir
+npm publish
+```
+
+Finally, don’t forget to update the docs published in the dedicated
+```sh
+cd frontend/
+mkdir temp/
+elm make --docs temp/docs.json
+git co elm-doc-preview
+cp temp/docs.json docs.json
+git ci -a --amend
+git push --force
+git co main
+rm -r temp/
+```

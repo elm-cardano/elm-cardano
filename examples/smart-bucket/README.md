@@ -5,6 +5,8 @@ that enables locking some utxos reusable by anyone, as long as they are put back
 I call such a utxo a "bucket".
 In this example, the bucket is limited to (testnet) ada and iUSD.
 But the iUSD policy could be replaced by any policy really.
+If you don’t replace the token policy ID by something you own,
+the second Tx ("Reuse the bucket") will fail to perform coin selection.
 
 ```sh
 # build the aiken contract

@@ -28,7 +28,7 @@ validator token_bucket {
   ) {
     // If it’s the owner signing, they can do whatever
     // Otherwise, let’s check that all invariants are respected
-    expect Some(Datum { owner, input_bucket_index }) = datum
+    expect Some(Datum { owner, .. }) = datum
     if list.has(self.extra_signatories, owner) {
       True
     } else {

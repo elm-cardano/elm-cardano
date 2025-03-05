@@ -3,10 +3,11 @@ module Cardano.Utxo exposing
     , RefDict, emptyRefDict, refDictFromList
     , fromLovelace, simpleOutput
     , refAsString
-    , lovelace, totalLovelace, compareLovelace, isAdaOnly
-    , minAda, checkMinAda, minAdaForAssets
+    , lovelace, totalLovelace, compareLovelace, isAdaOnly, isAssetsOnly
+    , minAda, checkMinAda, minAdaForAssets, freeAda, bytesWidth
     , encodeOutputReference, encodeOutput, encodeDatumOption
     , decodeOutputReference, decodeOutput
+    , outputReferenceToData
     )
 
 {-| Handling outputs.
@@ -34,12 +35,12 @@ module Cardano.Utxo exposing
 
 ## Query
 
-@docs lovelace, totalLovelace, compareLovelace, isAdaOnly
+@docs lovelace, totalLovelace, compareLovelace, isAdaOnly, isAssetsOnly
 
 
 ## Compute
 
-@docs minAda, checkMinAda, minAdaForAssets
+@docs minAda, checkMinAda, minAdaForAssets, freeAda, bytesWidth
 
 
 ## Convert
@@ -47,6 +48,8 @@ module Cardano.Utxo exposing
 @docs encodeOutputReference, encodeOutput, encodeDatumOption
 
 @docs decodeOutputReference, decodeOutput
+
+@docs outputReferenceToData
 
 -}
 
@@ -62,6 +65,7 @@ import Cbor.Decode.Extra as D
 import Cbor.Encode as E
 import Cbor.Tag as Tag
 import Dict.Any exposing (AnyDict)
+import Integer as I
 import Natural as N exposing (Natural)
 
 
@@ -198,6 +202,31 @@ isAdaOnly { amount, datumOption, referenceScript } =
         && (referenceScript == Nothing)
 
 
+{-| Check if the output contains only assets (Ada or tokens).
+Datums and ref scripts are not allowed.
+-}
+isAssetsOnly : Output -> Bool
+isAssetsOnly { datumOption, referenceScript } =
+    (datumOption == Nothing)
+        && (referenceScript == Nothing)
+
+
+{-| Computes the bytes width of the output if we encode it to CBOR.
+-}
+bytesWidth : Output -> Int
+bytesWidth output =
+    E.encode (encodeOutput output)
+        |> ElmBytes.width
+
+
+{-| Amount of Ada Lovelace "free" in the output,
+meaning the amount above the minimum required for the output.
+-}
+freeAda : Output -> Natural
+freeAda output =
+    N.sub output.amount.lovelace <| minAda output
+
+
 {-| Compute minimum Ada lovelace for a given [Output].
 
 Since the size of the lovelace field may impact minAda,
@@ -220,9 +249,7 @@ minAda ({ amount } as output) =
             else
                 output
     in
-    E.encode (encodeOutput updatedOutput)
-        |> ElmBytes.width
-        |> (\w -> N.fromSafeInt ((160 + w) * 4310))
+    N.fromSafeInt ((160 + bytesWidth updatedOutput) * 4310)
 
 
 {-| Check that an [Output] has enough ada to cover its size.
@@ -291,7 +318,7 @@ encodeDatumOption datumOption =
             DatumValue datum ->
                 [ E.int 1
                 , datum
-                    |> Data.toCbor
+                    |> Data.toCborUplc
                     |> E.encode
                     |> E.tagged Tag.Cbor E.bytes
                 ]
@@ -388,3 +415,14 @@ decodeOutputDatum =
                     Nothing ->
                         D.fail
             )
+
+
+{-| [Data] encoder function for [OutputReference].
+-}
+outputReferenceToData : OutputReference -> Data
+outputReferenceToData outRef =
+    Data.Constr
+        N.zero
+        [ Data.Bytes <| Bytes.toAny outRef.transactionId
+        , Data.Int <| I.fromSafeInt outRef.outputIndex
+        ]

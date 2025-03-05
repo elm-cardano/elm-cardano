@@ -6,7 +6,7 @@ import Bytes.Encode
 import Cardano exposing (SpendSource(..), TxIntent(..))
 import Cardano.Address as Address exposing (Address)
 import Cardano.Cip30 as Cip30
-import Cardano.Transaction as Transaction exposing (Transaction)
+import Cardano.Transaction exposing (Transaction)
 import Cardano.Utxo as Utxo
 import Cardano.Value as CValue
 import Dict exposing (Dict)
@@ -297,11 +297,8 @@ update msg model =
                         localStateUtxos =
                             Utxo.refDictFromList utxos
 
-                        oneAda =
-                            CValue.onlyLovelace (N.fromSafeString "1000000")
-
                         txIntents =
-                            [ Spend (FromWallet address oneAda), SendTo address oneAda ]
+                            [ SendTo address CValue.zero ]
                     in
                     case Cardano.finalize localStateUtxos [] txIntents of
                         Ok { tx } ->

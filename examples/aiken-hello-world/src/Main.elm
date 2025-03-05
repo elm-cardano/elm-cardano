@@ -2,7 +2,7 @@ port module Main exposing (..)
 
 import Browser
 import Bytes.Comparable as Bytes exposing (Bytes)
-import Cardano exposing (SpendSource(..), TxIntent(..), WitnessSource(..), dummyBytes)
+import Cardano exposing (SpendSource(..), TxIntent(..), WitnessSource(..))
 import Cardano.Address as Address exposing (Address, Credential(..), CredentialHash, NetworkId(..))
 import Cardano.Cip30 as Cip30
 import Cardano.Data as Data
@@ -122,12 +122,12 @@ update msg model =
                     )
 
                 -- We just received the utxos, let’s ask for the main change address of the wallet
-                ( Ok (Cip30.ApiResponse { walletId } (Cip30.WalletUtxos utxos)), WalletLoading { wallet } ) ->
+                ( Ok (Cip30.ApiResponse _ (Cip30.WalletUtxos utxos)), WalletLoading { wallet } ) ->
                     ( WalletLoading { wallet = wallet, utxos = utxos }
                     , toWallet (Cip30.encodeRequest (Cip30.getChangeAddress wallet))
                     )
 
-                ( Ok (Cip30.ApiResponse { walletId } (Cip30.ChangeAddress address)), WalletLoading { wallet, utxos } ) ->
+                ( Ok (Cip30.ApiResponse _ (Cip30.ChangeAddress address)), WalletLoading { wallet, utxos } ) ->
                     ( WalletLoaded { wallet = wallet, utxos = Utxo.refDictFromList utxos, changeAddress = address } { errors = "" }
                     , Cmd.none
                     )
@@ -142,7 +142,7 @@ update msg model =
                     , toWallet (Cip30.encodeRequest (Cip30.submitTx ctx.loadedWallet.wallet signedTx))
                     )
 
-                ( Ok (Cip30.ApiResponse { walletId } (Cip30.SubmittedTx txId)), Submitting ({ loadedWallet } as ctx) action { tx } ) ->
+                ( Ok (Cip30.ApiResponse _ (Cip30.SubmittedTx txId)), Submitting ({ loadedWallet } as ctx) action { tx } ) ->
                     let
                         -- Update the known UTxOs set after the given Tx is processed
                         { updatedState, spent, created } =
@@ -175,10 +175,22 @@ update msg model =
                     , Cmd.none
                     )
 
+                -- Received an error message from the wallet
+                ( Ok (Cip30.ApiError { info }), Submitting ctx action { tx } ) ->
+                    ( Submitting ctx action { tx = tx, errors = "CIP30 API Error: " ++ info }
+                    , Cmd.none
+                    )
+
+                -- Unknown type of message received from the wallet
+                ( Ok (Cip30.UnhandledResponseType error), Submitting ctx action { tx } ) ->
+                    ( Submitting ctx action { tx = tx, errors = "Unhandled CIP30 Response: " ++ error }
+                    , Cmd.none
+                    )
+
                 _ ->
                     ( model, Cmd.none )
 
-        ( ConnectButtonClicked { id }, WalletDiscovered descriptors ) ->
+        ( ConnectButtonClicked { id }, WalletDiscovered _ ) ->
             ( model, toWallet (Cip30.encodeRequest (Cip30.enableWallet { id = id, extensions = [] })) )
 
         ( LoadBlueprintButtonClicked, WalletLoaded _ _ ) ->
@@ -214,7 +226,7 @@ update msg model =
                 -- Extract both parts (payment/stake) from our wallet address
                 ( myKeyCred, myStakeCred ) =
                     ( Address.extractPubKeyHash w.changeAddress
-                        |> Maybe.withDefault (dummyBytes 28 "ERROR")
+                        |> Maybe.withDefault (Bytes.dummy 28 "ERROR")
                     , Address.extractStakeCredential w.changeAddress
                     )
 
@@ -279,7 +291,7 @@ update msg model =
 
 
 lock : AppContext -> ( Model, Cmd Msg )
-lock ({ localStateUtxos, myKeyCred, myStakeCred, scriptAddress, loadedWallet, lockScript } as ctx) =
+lock ({ localStateUtxos, myKeyCred, scriptAddress, loadedWallet, lockScript } as ctx) =
     let
         -- 1 ada is 1 million lovelaces
         twoAda =
@@ -292,7 +304,7 @@ lock ({ localStateUtxos, myKeyCred, myStakeCred, scriptAddress, loadedWallet, lo
 
         -- Transaction locking 2 ada at the script address
         lockTxAttempt =
-            [ Spend (FromWallet loadedWallet.changeAddress twoAda)
+            [ Spend (FromWallet { address = loadedWallet.changeAddress, value = twoAda, guaranteedUtxos = [] })
             , SendToOutput
                 { address = scriptAddress
                 , amount = twoAda
@@ -354,7 +366,7 @@ view model =
                        ]
                 )
 
-        Submitting { loadedWallet, lockScript } action { tx, errors } ->
+        Submitting { loadedWallet } action { errors } ->
             div []
                 (viewLoadedWallet loadedWallet
                     ++ [ div [] [ text <| "Signing and submitting the " ++ Debug.toString action ++ " transaction ..." ]
@@ -362,7 +374,7 @@ view model =
                        ]
                 )
 
-        TxSubmitted { loadedWallet, lockScript } action { txId, errors } ->
+        TxSubmitted { loadedWallet } action { txId, errors } ->
             let
                 actionButton =
                     case action of

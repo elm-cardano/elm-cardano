@@ -11,10 +11,9 @@ module Cardano.TxExamples exposing
 
 -}
 
-import Blake2b exposing (blake2b224)
 import Bytes.Comparable as Bytes exposing (Bytes)
 import Bytes.Map as Map
-import Cardano exposing (ActionProposal(..), CertificateIntent(..), CredentialWitness(..), Fee(..), ScriptWitness(..), SpendSource(..), TxIntent(..), TxOtherInfo(..), VoterWitness(..), WitnessSource(..), dummyBytes, finalize, finalizeAdvanced, prettyBytes)
+import Cardano exposing (ActionProposal(..), CertificateIntent(..), CredentialWitness(..), Fee(..), ScriptWitness(..), SpendSource(..), TxIntent(..), TxOtherInfo(..), VoterWitness(..), WitnessSource(..), finalize, finalizeAdvanced)
 import Cardano.Address as Address exposing (Address(..), Credential(..), CredentialHash, NetworkId(..), StakeAddress, StakeCredential(..))
 import Cardano.CoinSelection as CoinSelection
 import Cardano.Data as Data
@@ -101,7 +100,7 @@ globalStateUtxos =
 
 
 example1 _ =
-    [ Spend <| FromWallet exAddr.me ada.one
+    [ Spend <| FromWallet { address = exAddr.me, value = ada.one, guaranteedUtxos = [] }
     , SendTo exAddr.you ada.one
     ]
         |> finalize globalStateUtxos [ TxMetadata { tag = Natural.fromSafeInt 14, metadata = Metadatum.Int (Integer.fromSafeInt 42) } ]
@@ -121,7 +120,12 @@ example2 _ =
     , SendTo exAddr.me (Value.onlyToken dog.policyId dog.assetName Natural.one)
 
     -- burning 1 cat
-    , Spend <| FromWallet exAddr.me (Value.onlyToken cat.policyId cat.assetName Natural.one)
+    , Spend <|
+        FromWallet
+            { address = exAddr.me
+            , value = Value.onlyToken cat.policyId cat.assetName Natural.one
+            , guaranteedUtxos = []
+            }
     , MintBurn
         { policyId = cat.policyId
         , assets = Map.singleton cat.assetName Integer.negativeOne
@@ -177,8 +181,8 @@ example3 _ =
                 }
 
         -- Build a redeemer that contains the index of the spent script input.
-        redeemer inputsOutputs =
-            List.indexedMap Tuple.pair inputsOutputs.spentInputs
+        redeemer txBody =
+            List.indexedMap Tuple.pair txBody.inputs
                 |> findSpendingUtxo
                 |> (Data.Int << Integer.fromSafeInt)
 
@@ -225,9 +229,9 @@ example4 _ =
             Address.extractStakeKeyHash exAddr.me
                 |> Maybe.withDefault (dummyCredentialHash "ERROR")
     in
-    [ Spend <| FromWallet exAddr.me ada.two -- 2 ada for the registration deposit
+    [ Spend <| FromWallet { address = exAddr.me, value = ada.two, guaranteedUtxos = [] }
     , IssueCertificate <| RegisterStake { delegator = WithKey myStakeKeyHash, deposit = Natural.fromSafeInt 2000000 }
-    , IssueCertificate <| DelegateStake { delegator = WithKey myStakeKeyHash, poolId = dummyBytes 28 "poolId" }
+    , IssueCertificate <| DelegateStake { delegator = WithKey myStakeKeyHash, poolId = Bytes.dummy 28 "poolId" }
     , IssueCertificate <| DelegateVotes { delegator = WithKey myStakeKeyHash, drep = VKeyHash <| dummyCredentialHash "drep" }
     ]
         |> finalize globalStateUtxos []
@@ -292,38 +296,43 @@ example5 _ =
                 }
     in
     [ -- 600K deposit for all the gov actions
-      Spend <| FromWallet exAddr.me <| Value.onlyLovelace (Natural.mul Natural.six ada100K)
+      Spend <|
+        FromWallet
+            { address = exAddr.me
+            , value = Value.onlyLovelace (Natural.mul Natural.six ada100K)
+            , guaranteedUtxos = []
+            }
 
     -- Change minPoolCost to 0
     , propose
         (ParameterChange { noParamUpdate | minPoolCost = Just Natural.zero })
-        { url = "param-url", dataHash = dummyBytes 32 "param-hash-" }
+        { url = "param-url", dataHash = Bytes.dummy 32 "param-hash-" }
 
     -- Withdraw 1M ada from the treasury
     , propose
         (TreasuryWithdrawals [ { destination = myStakeAddress, amount = Natural.fromSafeString "1000000000000" } ])
-        { url = "withdraw-url", dataHash = dummyBytes 32 "withdraw-hash-" }
+        { url = "withdraw-url", dataHash = Bytes.dummy 32 "withdraw-hash-" }
 
     -- Change the constitution to not have a guardrails script anymore
     , propose
         (NewConstitution
-            { anchor = { url = "constitution-url", dataHash = dummyBytes 32 "const-hash-" }
+            { anchor = { url = "constitution-url", dataHash = Bytes.dummy 32 "const-hash-" }
             , scripthash = Nothing
             }
         )
-        { url = "new-const-url", dataHash = dummyBytes 32 "new-const-hash-" }
+        { url = "new-const-url", dataHash = Bytes.dummy 32 "new-const-hash-" }
 
     -- Change to a state of No Confidence
     , propose NoConfidence
-        { url = "no-conf-url", dataHash = dummyBytes 32 "no-conf-hash-" }
+        { url = "no-conf-url", dataHash = Bytes.dummy 32 "no-conf-hash-" }
 
     -- Ask an info poll about pineapple pizza
     , propose Info
-        { url = "info-url", dataHash = dummyBytes 32 "info-hash-" }
+        { url = "info-url", dataHash = Bytes.dummy 32 "info-hash-" }
 
     -- Finally, suggest a hard fork
     , propose (HardForkInitiation ( 14, 0 ))
-        { url = "hf-url", dataHash = dummyBytes 32 "hf-hash-" }
+        { url = "hf-url", dataHash = Bytes.dummy 32 "hf-hash-" }
     ]
         |> finalizeAdvanced
             { govState = govState
@@ -348,7 +357,7 @@ example6 _ =
 
         -- Action being voted on
         actionId index =
-            { transactionId = dummyBytes 32 "actionTx-"
+            { transactionId = Bytes.dummy 32 "actionTx-"
             , govActionIndex = index
             }
 
@@ -356,13 +365,8 @@ example6 _ =
         drepScript =
             ScriptAll []
 
-        drepScriptCbor =
-            E.encode (Script.encodeNativeScript drepScript)
-                |> Bytes.fromBytes
-
         drepScriptHash =
-            blake2b224 Nothing (Bytes.toU8 drepScriptCbor)
-                |> Bytes.fromU8
+            Script.hash (Script.Native drepScript)
 
         -- Define different voters
         withMyDrepCred =
@@ -399,7 +403,7 @@ example6 _ =
 
 dummyCredentialHash : String -> Bytes CredentialHash
 dummyCredentialHash str =
-    dummyBytes 28 str
+    Bytes.dummy 28 str
 
 
 makeWalletAddress : String -> Address
@@ -418,7 +422,7 @@ makeAddress name =
 
 makeRef : String -> Int -> OutputReference
 makeRef id index =
-    { transactionId = dummyBytes 32 id
+    { transactionId = Bytes.dummy 32 id
     , outputIndex = index
     }
 
@@ -453,7 +457,7 @@ makeToken policyId name amount =
 prettyAddr address =
     case address of
         Byron b ->
-            prettyBytes b
+            Bytes.pretty b
 
         Shelley { paymentCredential, stakeCredential } ->
             [ Just "Addr:", Just (prettyCred paymentCredential), Maybe.map prettyStakeCred stakeCredential ]
@@ -476,10 +480,10 @@ prettyStakeCred stakeCred =
 prettyCred cred =
     case cred of
         Address.VKeyHash b ->
-            "key:" ++ prettyBytes b
+            "key:" ++ Bytes.pretty b
 
         Address.ScriptHash b ->
-            "script:" ++ prettyBytes b
+            "script:" ++ Bytes.pretty b
 
 
 prettyWithdrawal : ( StakeAddress, Natural ) -> String
@@ -497,13 +501,13 @@ prettyCert cert =
             "stake-deregistration for " ++ prettyCred delegator
 
         StakeDelegationCert { delegator, poolId } ->
-            "stake-delegation for " ++ prettyCred delegator ++ " to pool " ++ prettyBytes poolId
+            "stake-delegation for " ++ prettyCred delegator ++ " to pool " ++ Bytes.pretty poolId
 
         PoolRegistrationCert _ ->
             "pool-registration"
 
         PoolRetirementCert { poolId, epoch } ->
-            "pool-retirement for pool " ++ prettyBytes poolId ++ " at epoch " ++ Natural.toString epoch
+            "pool-retirement for pool " ++ Bytes.pretty poolId ++ " at epoch " ++ Natural.toString epoch
 
         GenesisKeyDelegationCert _ ->
             "genesis-key-delegation"
@@ -521,7 +525,7 @@ prettyCert cert =
             "vote-deleg-cert for " ++ prettyCred delegator ++ " to " ++ prettyDrep drep
 
         StakeVoteDelegCert { delegator, poolId, drep } ->
-            "stake-vote-deleg-cert for " ++ prettyCred delegator ++ " to " ++ prettyDrep drep ++ " and " ++ prettyBytes poolId
+            "stake-vote-deleg-cert for " ++ prettyCred delegator ++ " to " ++ prettyDrep drep ++ " and " ++ Bytes.pretty poolId
 
         StakeRegDelegCert _ ->
             "stake-reg-deleg-cert TODO"
@@ -560,7 +564,7 @@ prettyVote ( voter, votes ) =
                     "DRep: " ++ prettyCred cred
 
                 VoterPoolId poolId ->
-                    "Pool: " ++ prettyBytes poolId
+                    "Pool: " ++ Bytes.pretty poolId
 
         voteStr ( actionId, procedure ) =
             let
@@ -605,7 +609,7 @@ prettyAction action =
             ( "Parameter Change"
             , List.concat
                 [ [ "Latest Enacted: " ++ Maybe.withDefault "None" (Maybe.map prettyActionId latestEnacted)
-                  , "Guardrails Policy: " ++ Maybe.withDefault "None" (Maybe.map prettyBytes guardrailsPolicy)
+                  , "Guardrails Policy: " ++ Maybe.withDefault "None" (Maybe.map Bytes.pretty guardrailsPolicy)
                   , "Protocol Param Update:"
                   ]
                 , List.map (indent 3) (prettyProtocolParamUpdate protocolParamUpdate)
@@ -622,7 +626,7 @@ prettyAction action =
         Gov.TreasuryWithdrawals { withdrawals, guardrailsPolicy } ->
             ( "Treasury Withdrawals"
             , [ "Withdrawals: " ++ String.join ", " (List.map prettyWithdrawal withdrawals)
-              , "Guardrails Policy: " ++ Maybe.withDefault "None" (Maybe.map prettyBytes guardrailsPolicy)
+              , "Guardrails Policy: " ++ Maybe.withDefault "None" (Maybe.map Bytes.pretty guardrailsPolicy)
               ]
             )
 
@@ -655,7 +659,7 @@ prettyAction action =
 prettyActionId : ActionId -> String
 prettyActionId actionId =
     String.join " "
-        [ "TxId:" ++ prettyBytes actionId.transactionId
+        [ "TxId:" ++ Bytes.pretty actionId.transactionId
         , "#" ++ String.fromInt actionId.govActionIndex
         ]
 
@@ -709,13 +713,13 @@ prettyAddedMember { newMember, expirationEpoch } =
 prettyConstitution : Constitution -> List String
 prettyConstitution constitution =
     [ "Anchor: " ++ prettyAnchor constitution.anchor
-    , "Script Hash: " ++ Maybe.withDefault "None" (Maybe.map prettyBytes constitution.scripthash)
+    , "Script Hash: " ++ Maybe.withDefault "None" (Maybe.map Bytes.pretty constitution.scripthash)
     ]
 
 
 prettyAnchor : Anchor -> String
 prettyAnchor anchor =
-    "URL: " ++ anchor.url ++ ", Hash: " ++ prettyBytes anchor.dataHash
+    "URL: " ++ anchor.url ++ ", Hash: " ++ Bytes.pretty anchor.dataHash
 
 
 prettyRational : RationalNumber -> String
@@ -804,8 +808,8 @@ prettyAssets toStr multiAsset =
                     |> List.map
                         (\( name, amount ) ->
                             String.join " "
-                                [ prettyBytes policyId
-                                , prettyBytes name
+                                [ Bytes.pretty policyId
+                                , Bytes.pretty name
                                 , toStr amount
                                 ]
                         )
@@ -815,7 +819,7 @@ prettyAssets toStr multiAsset =
 prettyDatum datumOption =
     case datumOption of
         Utxo.DatumHash h ->
-            "datumHash: " ++ prettyBytes h
+            "datumHash: " ++ Bytes.pretty h
 
         Utxo.DatumValue data ->
             "datum: " ++ prettyCbor Data.toCbor data
@@ -845,7 +849,7 @@ prettyScript script =
 
 prettyInput ref =
     String.join " "
-        [ "TxId:" ++ prettyBytes ref.transactionId
+        [ "TxId:" ++ Bytes.pretty ref.transactionId
         , "#" ++ String.fromInt ref.outputIndex
         ]
 
@@ -881,8 +885,8 @@ prettyMints sectionTitle multiAsset =
 
 prettyVKeyWitness { vkey, signature } =
     String.join ", "
-        [ "vkey:" ++ prettyBytes vkey
-        , "signature:" ++ prettyBytes signature
+        [ "vkey:" ++ Bytes.pretty vkey
+        , "signature:" ++ Bytes.pretty signature
         ]
 
 
@@ -924,7 +928,7 @@ prettyTx tx =
                 , ifNonEmpty List.isEmpty tx.body.votingProcedures [ "Tx votes:" ]
                 , List.concatMap prettyVote tx.body.votingProcedures
                     |> List.map (indent 3)
-                , prettyList "Tx required signers:" prettyBytes tx.body.requiredSigners
+                , prettyList "Tx required signers:" Bytes.pretty tx.body.requiredSigners
                 , prettyList
                     ("Tx collateral (total: ₳ " ++ (Maybe.withDefault "not set" <| Maybe.map String.fromInt tx.body.totalCollateral) ++ "):")
                     prettyInput
@@ -942,11 +946,11 @@ prettyTx tx =
                     , tx.witnessSet.nativeScripts
                         |> Maybe.map (prettyList "Tx native scripts:" (prettyScript << Script.Native))
                     , tx.witnessSet.plutusV1Script
-                        |> Maybe.map (prettyList "Tx plutus V1 scripts:" prettyBytes)
+                        |> Maybe.map (prettyList "Tx plutus V1 scripts:" Bytes.pretty)
                     , tx.witnessSet.plutusV2Script
-                        |> Maybe.map (prettyList "Tx plutus V2 scripts:" prettyBytes)
+                        |> Maybe.map (prettyList "Tx plutus V2 scripts:" Bytes.pretty)
                     , tx.witnessSet.plutusV3Script
-                        |> Maybe.map (prettyList "Tx plutus V3 scripts:" prettyBytes)
+                        |> Maybe.map (prettyList "Tx plutus V3 scripts:" Bytes.pretty)
                     , tx.witnessSet.redeemer
                         |> Maybe.map (prettyList "Tx redeemers:" prettyRedeemer)
 
@@ -963,9 +967,9 @@ prettyTx tx =
                     List.concat <|
                         [ prettyList "Tx metadata:" prettyMetadata auxData.labels
                         , prettyList "Tx native scripts in auxiliary data:" (prettyScript << Script.Native) auxData.nativeScripts
-                        , prettyList "Tx plutus V1 scripts in auxiliary data:" prettyBytes auxData.plutusV1Scripts
-                        , prettyList "Tx plutus V2 scripts in auxiliary data:" prettyBytes auxData.plutusV2Scripts
-                        , prettyList "Tx plutus V3 scripts in auxiliary data:" prettyBytes auxData.plutusV3Scripts
+                        , prettyList "Tx plutus V1 scripts in auxiliary data:" Bytes.pretty auxData.plutusV1Scripts
+                        , prettyList "Tx plutus V2 scripts in auxiliary data:" Bytes.pretty auxData.plutusV2Scripts
+                        , prettyList "Tx plutus V3 scripts in auxiliary data:" Bytes.pretty auxData.plutusV3Scripts
                         ]
     in
     List.concat [ body, witnessSet, auxiliaryData ]

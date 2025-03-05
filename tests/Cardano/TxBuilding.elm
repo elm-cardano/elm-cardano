@@ -1,9 +1,8 @@
 module Cardano.TxBuilding exposing (suite)
 
-import Blake2b exposing (blake2b224)
 import Bytes.Comparable as Bytes exposing (Bytes)
 import Bytes.Map as Map
-import Cardano exposing (ActionProposal(..), CertificateIntent(..), CredentialWitness(..), Fee(..), GovernanceState, ScriptWitness(..), SpendSource(..), TxFinalizationError(..), TxFinalized, TxIntent(..), TxOtherInfo(..), VoterWitness(..), WitnessSource(..), dummyBytes, finalizeAdvanced)
+import Cardano exposing (ActionProposal(..), CertificateIntent(..), CredentialWitness(..), Fee(..), GovernanceState, ScriptWitness(..), SpendSource(..), TxFinalizationError(..), TxFinalized, TxIntent(..), TxOtherInfo(..), VoterWitness(..), WitnessSource(..), finalizeAdvanced)
 import Cardano.Address as Address exposing (Address, Credential(..), CredentialHash, NetworkId(..), StakeCredential(..))
 import Cardano.CoinSelection as CoinSelection exposing (Error(..))
 import Cardano.Data as Data
@@ -16,7 +15,6 @@ import Cardano.Transaction as Transaction exposing (Certificate(..), Transaction
 import Cardano.Uplc as Uplc
 import Cardano.Utxo as Utxo exposing (DatumOption(..), Output, OutputReference)
 import Cardano.Value as Value exposing (Value)
-import Cbor.Encode as E
 import Expect exposing (Expectation)
 import Integer
 import Natural exposing (Natural)
@@ -69,7 +67,7 @@ okTxBuilding =
                             | witnessSet =
                                 { newWitnessSet
                                     | vkeywitness =
-                                        Just [ { vkey = dummyBytes 32 "", signature = dummyBytes 64 "" } ]
+                                        Just [ { vkey = Bytes.dummy 32 "", signature = Bytes.dummy 64 "" } ]
                                 }
                         }
 
@@ -101,7 +99,7 @@ okTxBuilding =
             , fee = twoAdaFee
             , txOtherInfo = []
             , txIntents =
-                [ Spend <| FromWallet testAddr.me (Value.onlyLovelace <| ada 1)
+                [ Spend <| FromWallet { address = testAddr.me, value = Value.onlyLovelace <| ada 1, guaranteedUtxos = [] }
                 , SendTo testAddr.me (Value.onlyLovelace <| ada 1)
                 ]
             }
@@ -125,7 +123,7 @@ okTxBuilding =
                         Utxo.refDictFromList [ makeAdaOutput 0 testAddr.me 5 ]
 
                     txIntents =
-                        [ Spend <| FromWallet testAddr.me (Value.onlyLovelace <| ada 1)
+                        [ Spend <| FromWallet { address = testAddr.me, value = Value.onlyLovelace <| ada 1, guaranteedUtxos = [] }
                         , SendTo testAddr.me (Value.onlyLovelace <| ada 1)
                         ]
                 in
@@ -137,7 +135,7 @@ okTxBuilding =
             , fee = twoAdaFee
             , txOtherInfo = []
             , txIntents =
-                [ Spend <| FromWallet testAddr.me (Value.onlyLovelace <| ada 1)
+                [ Spend <| FromWallet { address = testAddr.me, value = Value.onlyLovelace <| ada 1, guaranteedUtxos = [] }
                 , SendTo testAddr.you (Value.onlyLovelace <| ada 1)
                 ]
             }
@@ -167,7 +165,7 @@ okTxBuilding =
             , fee = twoAdaFee
             , txOtherInfo = []
             , txIntents =
-                [ Spend <| FromWallet testAddr.you (Value.onlyLovelace <| ada 1)
+                [ Spend <| FromWallet { address = testAddr.you, value = Value.onlyLovelace <| ada 1, guaranteedUtxos = [] }
                 , SendTo testAddr.me (Value.onlyLovelace <| ada 1)
                 ]
             }
@@ -207,7 +205,7 @@ okTxBuilding =
             , fee = twoAdaFee
             , txOtherInfo = []
             , txIntents =
-                [ Spend <| FromWallet testAddr.me threeCatTwoAda
+                [ Spend <| FromWallet { address = testAddr.me, value = threeCatTwoAda, guaranteedUtxos = [] }
                 , SendTo testAddr.you threeCatTwoAda
                 ]
             }
@@ -247,7 +245,7 @@ okTxBuilding =
             , fee = twoAdaFee
             , txOtherInfo = []
             , txIntents =
-                [ Spend <| FromWallet testAddr.me threeCatMinAda
+                [ Spend <| FromWallet { address = testAddr.me, value = threeCatMinAda, guaranteedUtxos = [] }
                 , SendTo testAddr.you threeCatMinAda
                 ]
             }
@@ -288,7 +286,12 @@ okTxBuilding =
                 , SendTo testAddr.me (Value.onlyToken dog.policyId dog.assetName Natural.one)
 
                 -- burning 1 cat
-                , Spend <| FromWallet testAddr.me (Value.onlyToken cat.policyId cat.assetName Natural.one)
+                , Spend <|
+                    FromWallet
+                        { address = testAddr.me
+                        , value = Value.onlyToken cat.policyId cat.assetName Natural.one
+                        , guaranteedUtxos = []
+                        }
                 , MintBurn
                     { policyId = cat.policyId
                     , assets = Map.singleton cat.assetName Integer.negativeOne
@@ -365,8 +368,8 @@ okTxBuilding =
                     }
 
             -- Build a redeemer that contains the index of the spent script input.
-            redeemer inputsOutputs =
-                List.indexedMap Tuple.pair inputsOutputs.spentInputs
+            redeemer txBody =
+                List.indexedMap Tuple.pair txBody.inputs
                     |> findSpendingUtxo
                     |> (Data.Int << Integer.fromSafeInt)
 
@@ -380,7 +383,8 @@ okTxBuilding =
                 }
 
             localStateUtxos =
-                [ makeAdaOutput 0 testAddr.me 5
+                [ makeAdaOutput 0 testAddr.me 14
+                , makeAdaOutput 1 testAddr.me 8
                 , ( utxoBeingSpent, makeLockedOutput <| Value.onlyLovelace <| ada 4 )
                 ]
           in
@@ -418,16 +422,16 @@ okTxBuilding =
                                 , requiredSigners = [ myKeyCred ]
                                 , outputs =
                                     [ makeLockedOutput <| Value.onlyLovelace <| ada 2
-                                    , Utxo.fromLovelace testAddr.me (ada 5)
+                                    , Utxo.fromLovelace testAddr.me (ada 14)
                                     ]
 
                                 -- script stuff
                                 , scriptDataHash = tx.body.scriptDataHash
 
-                                -- collateral would cost 3 ada for 2 ada fees, so return 5-3=2 ada
-                                , collateral = [ makeRef "0" 0 ]
+                                -- collateral would cost 3 ada for 2 ada fees, so return 8-3=5 ada
+                                , collateral = [ makeRef "1" 1 ]
                                 , totalCollateral = Just 3000000
-                                , collateralReturn = Just (Utxo.fromLovelace testAddr.me (ada 2))
+                                , collateralReturn = Just (Utxo.fromLovelace testAddr.me (ada 5))
                             }
                         , witnessSet =
                             { newWitnessSet
@@ -456,9 +460,14 @@ okTxBuilding =
             , fee = twoAdaFee
             , txOtherInfo = []
             , txIntents =
-                [ Spend <| FromWallet testAddr.me <| Value.onlyLovelace (ada 2) -- 2 ada for the registration deposit
+                [ Spend <|
+                    FromWallet
+                        { address = testAddr.me
+                        , value = Value.onlyLovelace (ada 2) -- 2 ada for the registration deposit
+                        , guaranteedUtxos = []
+                        }
                 , IssueCertificate <| RegisterStake { delegator = WithKey myStakeKeyHash, deposit = ada 2 }
-                , IssueCertificate <| DelegateStake { delegator = WithKey myStakeKeyHash, poolId = dummyBytes 28 "poolId" }
+                , IssueCertificate <| DelegateStake { delegator = WithKey myStakeKeyHash, poolId = Bytes.dummy 28 "poolId" }
                 , IssueCertificate <| DelegateVotes { delegator = WithKey myStakeKeyHash, drep = VKeyHash <| dummyCredentialHash "drep" }
                 ]
             }
@@ -472,7 +481,7 @@ okTxBuilding =
                                 , outputs = [ Utxo.fromLovelace testAddr.me (ada 1) ]
                                 , certificates =
                                     [ RegCert { delegator = VKeyHash myStakeKeyHash, deposit = Natural.fromSafeInt 2000000 }
-                                    , StakeDelegationCert { delegator = VKeyHash myStakeKeyHash, poolId = dummyBytes 28 "poolId" }
+                                    , StakeDelegationCert { delegator = VKeyHash myStakeKeyHash, poolId = Bytes.dummy 28 "poolId" }
                                     , VoteDelegCert { delegator = VKeyHash myStakeKeyHash, drep = DrepCredential <| VKeyHash <| dummyCredentialHash "drep" }
                                     ]
                             }
@@ -541,38 +550,43 @@ okTxBuilding =
             , txOtherInfo = []
             , txIntents =
                 [ -- 600K deposit for all the gov actions
-                  Spend <| FromWallet testAddr.me <| Value.onlyLovelace (Natural.mul Natural.six ada100K)
+                  Spend <|
+                    FromWallet
+                        { address = testAddr.me
+                        , value = Value.onlyLovelace (Natural.mul Natural.six ada100K)
+                        , guaranteedUtxos = []
+                        }
 
                 -- Change minPoolCost to 0
                 , propose
                     (ParameterChange { noParamUpdate | minPoolCost = Just Natural.zero })
-                    { url = "param-url", dataHash = dummyBytes 32 "param-hash-" }
+                    { url = "param-url", dataHash = Bytes.dummy 32 "param-hash-" }
 
                 -- Withdraw 1M ada from the treasury
                 , propose
                     (TreasuryWithdrawals [ { destination = myStakeAddress, amount = ada 1000000 } ])
-                    { url = "withdraw-url", dataHash = dummyBytes 32 "withdraw-hash-" }
+                    { url = "withdraw-url", dataHash = Bytes.dummy 32 "withdraw-hash-" }
 
                 -- Change the constitution to not have a guardrails script anymore
                 , propose
                     (NewConstitution
-                        { anchor = { url = "constitution-url", dataHash = dummyBytes 32 "const-hash-" }
+                        { anchor = { url = "constitution-url", dataHash = Bytes.dummy 32 "const-hash-" }
                         , scripthash = Nothing
                         }
                     )
-                    { url = "new-const-url", dataHash = dummyBytes 32 "new-const-hash-" }
+                    { url = "new-const-url", dataHash = Bytes.dummy 32 "new-const-hash-" }
 
                 -- Change to a state of No Confidence
                 , propose NoConfidence
-                    { url = "no-conf-url", dataHash = dummyBytes 32 "no-conf-hash-" }
+                    { url = "no-conf-url", dataHash = Bytes.dummy 32 "no-conf-hash-" }
 
                 -- Ask an info poll about pineapple pizza
                 , propose Info
-                    { url = "info-url", dataHash = dummyBytes 32 "info-hash-" }
+                    { url = "info-url", dataHash = Bytes.dummy 32 "info-hash-" }
 
                 -- Finally, suggest a hard fork
                 , propose (HardForkInitiation ( 14, 0 ))
-                    { url = "hf-url", dataHash = dummyBytes 32 "hf-hash-" }
+                    { url = "hf-url", dataHash = Bytes.dummy 32 "hf-hash-" }
                 ]
             }
             (\{ tx } ->
@@ -580,7 +594,7 @@ okTxBuilding =
                     makeProposalProcedure shortname govAction =
                         { deposit = ada100K
                         , depositReturnAccount = myStakeAddress
-                        , anchor = { url = shortname ++ "-url", dataHash = dummyBytes 32 (shortname ++ "-hash-") }
+                        , anchor = { url = shortname ++ "-url", dataHash = Bytes.dummy 32 (shortname ++ "-hash-") }
                         , govAction = govAction
                         }
                 in
@@ -611,7 +625,7 @@ okTxBuilding =
                                         (Gov.NewConstitution
                                             { latestEnacted = Nothing
                                             , constitution =
-                                                { anchor = { url = "constitution-url", dataHash = dummyBytes 32 "const-hash-" }
+                                                { anchor = { url = "constitution-url", dataHash = Bytes.dummy 32 "const-hash-" }
                                                 , scripthash = Nothing
                                                 }
                                             }
@@ -649,7 +663,7 @@ okTxBuilding =
 
             -- Action being voted on
             actionId index =
-                { transactionId = dummyBytes 32 "actionTx"
+                { transactionId = Bytes.dummy 32 "actionTx"
                 , govActionIndex = index
                 }
 
@@ -657,13 +671,8 @@ okTxBuilding =
             drepScript =
                 ScriptAll []
 
-            drepScriptCbor =
-                E.encode (Script.encodeNativeScript drepScript)
-                    |> Bytes.fromBytes
-
             drepScriptHash =
-                blake2b224 Nothing (Bytes.toU8 drepScriptCbor)
-                    |> Bytes.fromU8
+                Script.hash (Script.Native drepScript)
 
             -- Define different voters
             withMyDrepCred =
@@ -814,7 +823,12 @@ failTxBuilding =
             , fee = twoAdaFee
             , txOtherInfo = []
             , txIntents =
-                [ Spend <| FromWalletUtxo (makeRef "0" 0)
+                [ Spend <|
+                    FromWallet
+                        { address = testAddr.me
+                        , value = Value.onlyLovelace <| ada 1
+                        , guaranteedUtxos = [ makeRef "0" 0 ] -- Non-existent UTxO
+                        }
                 , SendTo testAddr.me (Value.onlyLovelace <| ada 1)
                 ]
             }
@@ -832,7 +846,7 @@ failTxBuilding =
             , evalScriptsCosts = \_ _ -> Ok []
             , fee = twoAdaFee
             , txOtherInfo = []
-            , txIntents = [ Spend <| FromWallet testAddr.me (Value.onlyLovelace <| ada 1) ]
+            , txIntents = [ Spend <| FromWallet { address = testAddr.me, value = Value.onlyLovelace <| ada 1, guaranteedUtxos = [] } ]
             }
             (\error ->
                 case error of
@@ -865,7 +879,7 @@ failTxBuilding =
             , fee = twoAdaFee
             , txOtherInfo = []
             , txIntents =
-                [ Spend <| FromWallet testAddr.me (Value.onlyLovelace <| Natural.fromSafeInt 100)
+                [ Spend <| FromWallet { address = testAddr.me, value = Value.onlyLovelace <| Natural.fromSafeInt 100, guaranteedUtxos = [] }
                 , SendToOutput (Utxo.fromLovelace testAddr.me <| Natural.fromSafeInt 100)
                 ]
             }
@@ -887,7 +901,12 @@ failTxBuilding =
             , fee = twoAdaFee
             , txOtherInfo = []
             , txIntents =
-                [ Spend <| FromWallet testAddr.me (Value.onlyToken cat.policyId cat.assetName Natural.three)
+                [ Spend <|
+                    FromWallet
+                        { address = testAddr.me
+                        , value = Value.onlyToken cat.policyId cat.assetName Natural.three
+                        , guaranteedUtxos = []
+                        }
                 , SendTo testAddr.you (Value.onlyToken cat.policyId cat.assetName Natural.three)
                 ]
             }
@@ -935,7 +954,98 @@ failTxBuilding =
                         Expect.fail ("I didn’t expect this failure: " ++ Debug.toString error)
             )
 
-        -- TODO: test for collateral selection error
+        -- Test for collateral selection error
+        , let
+            utxoBeingSpent =
+                makeRef "previouslySentToLock" 0
+
+            findSpendingUtxo inputs =
+                case inputs of
+                    [] ->
+                        0
+
+                    ( id, ref ) :: next ->
+                        if ref == utxoBeingSpent then
+                            id
+
+                        else
+                            findSpendingUtxo next
+
+            ( myKeyCred, myStakeCred ) =
+                ( Address.extractPubKeyHash testAddr.me
+                    |> Maybe.withDefault (Bytes.fromText "should not fail")
+                , Address.extractStakeCredential testAddr.me
+                )
+
+            -- Lock script made with Aiken
+            lock =
+                { scriptBytes = Bytes.fromHexUnchecked "58b501010032323232323225333002323232323253330073370e900118041baa0011323232533300a3370e900018059baa00113322323300100100322533301100114a0264a66601e66e3cdd718098010020a5113300300300130130013758601c601e601e601e601e601e601e601e601e60186ea801cdd7180718061baa00116300d300e002300c001300937540022c6014601600460120026012004600e00260086ea8004526136565734aae7555cf2ab9f5742ae881"
+                , scriptHash = Bytes.fromHexUnchecked "3ff0b1bb5815347c6f0c05328556d80c1f83ca47ac410d25ffb4a330"
+                }
+
+            -- Combining the script hash with our stake credential
+            -- to keep the locked ada staked.
+            lockScriptAddress =
+                Address.Shelley
+                    { networkId = Mainnet
+                    , paymentCredential = ScriptHash lock.scriptHash
+                    , stakeCredential = myStakeCred
+                    }
+
+            -- Build a redeemer that contains the index of the spent script input.
+            redeemer txBody =
+                List.indexedMap Tuple.pair txBody.inputs
+                    |> findSpendingUtxo
+                    |> (Data.Int << Integer.fromSafeInt)
+
+            -- Helper function to create an output at the lock script address.
+            -- It contains our key credential in the datum.
+            makeLockedOutput adaAmount =
+                { address = lockScriptAddress
+                , amount = adaAmount
+                , datumOption = Just (DatumValue (Data.Bytes <| Bytes.toAny myKeyCred))
+                , referenceScript = Nothing
+                }
+
+            -- We put only 2 ada in local UTxOs, but we need 3 ada for the collateral
+            -- because the Tx fees is 2 ada.
+            localStateUtxos =
+                [ makeAdaOutput 0 testAddr.me 2
+                , ( utxoBeingSpent, makeLockedOutput <| Value.onlyLovelace <| ada 4 )
+                ]
+          in
+          failTxTest "collateral insufficient in: spend 2 ada from a plutus script holding 4 ada"
+            { govState = Cardano.emptyGovernanceState
+            , localStateUtxos = localStateUtxos
+            , evalScriptsCosts = Uplc.evalScriptsCosts Uplc.defaultVmConfig
+            , fee = twoAdaFee
+            , txOtherInfo = []
+            , txIntents =
+                -- Collect 2 ada from the lock script
+                [ Spend <|
+                    FromPlutusScript
+                        { spentInput = utxoBeingSpent
+                        , datumWitness = Nothing
+                        , plutusScriptWitness =
+                            { script = ( PlutusV3, WitnessValue lock.scriptBytes )
+                            , redeemerData = redeemer
+                            , requiredSigners = [ myKeyCred ]
+                            }
+                        }
+                , SendTo testAddr.me (Value.onlyLovelace <| ada 2)
+
+                -- Return the other 2 ada to the lock script (there was 4 ada initially)
+                , SendToOutput (makeLockedOutput <| Value.onlyLovelace <| ada 2)
+                ]
+            }
+            (\error ->
+                case error of
+                    CollateralSelectionError (CoinSelection.UTxOBalanceInsufficient _) ->
+                        Expect.pass
+
+                    _ ->
+                        Expect.fail ("I didn’t expect this failure: " ++ Debug.toString error)
+            )
         ]
 
 
@@ -1033,7 +1143,7 @@ autoFee =
 
 dummyCredentialHash : String -> Bytes CredentialHash
 dummyCredentialHash str =
-    dummyBytes 28 str
+    Bytes.dummy 28 str
 
 
 makeWalletAddress : String -> Address
@@ -1052,7 +1162,7 @@ makeAddress name =
 
 makeRef : String -> Int -> OutputReference
 makeRef id index =
-    { transactionId = dummyBytes 32 id
+    { transactionId = Bytes.dummy 32 id
     , outputIndex = index
     }
 

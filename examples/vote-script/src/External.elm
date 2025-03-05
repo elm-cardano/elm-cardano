@@ -1,25 +1,21 @@
 port module External exposing (main)
 
 import Browser
-import Bytes.Comparable as Bytes exposing (Bytes)
-import Cardano exposing (SpendSource(..), TxIntent(..), WitnessSource(..), dummyBytes)
-import Cardano.Address as Address exposing (Address, Credential(..), CredentialHash, NetworkId(..))
+import Bytes.Comparable as Bytes
+import Cardano exposing (SpendSource(..), TxIntent(..), WitnessSource(..))
+import Cardano.Address as Address exposing (Address, Credential(..), NetworkId(..))
 import Cardano.Cip30 as Cip30
-import Cardano.Data as Data
-import Cardano.Script exposing (PlutusVersion(..), ScriptCbor)
+import Cardano.Script exposing (PlutusVersion(..))
 import Cardano.Transaction as Tx exposing (Transaction)
-import Cardano.Utxo as Utxo exposing (DatumOption(..), Output, OutputReference, TransactionId)
-import Cardano.Value
+import Cardano.Utxo as Utxo exposing (DatumOption(..), Output)
 import Cbor.Encode
 import Dict.Any
 import Hex.Convert
-import Html exposing (Html, button, div, text)
+import Html exposing (Html, div, text)
 import Html.Attributes exposing (height, src)
 import Html.Events exposing (onClick)
-import Http
 import Json.Decode as JD exposing (Decoder, Value)
 import Json.Encode as JE
-import Natural
 
 
 main =
@@ -140,17 +136,17 @@ update msg model =
                     )
 
                 -- We just received the utxos, let’s ask for the main change address of the wallet
-                ( Ok (Cip30.ApiResponse { walletId } (Cip30.WalletUtxos utxos)), WalletLoading { wallet } ) ->
+                ( Ok (Cip30.ApiResponse _ (Cip30.WalletUtxos utxos)), WalletLoading { wallet } ) ->
                     ( WalletLoading { wallet = wallet, utxos = utxos }
                     , toExternalWallet (Cip30.encodeRequest (Cip30.getChangeAddress wallet))
                     )
 
-                ( Ok (Cip30.ApiResponse { walletId } (Cip30.ChangeAddress address)), WalletLoading { wallet, utxos } ) ->
+                ( Ok (Cip30.ApiResponse _ (Cip30.ChangeAddress address)), WalletLoading { wallet, utxos } ) ->
                     ( WalletLoaded { wallet = wallet, utxos = Utxo.refDictFromList utxos, changeAddress = address } { errors = "" }
                     , Cmd.none
                     )
 
-                ( Ok (Cip30.ApiResponse _ (Cip30.SignedTx vkeywitnesses)), WalletLoaded loadedWallet { errors } ) ->
+                ( Ok (Cip30.ApiResponse _ (Cip30.SignedTx vkeywitnesses)), WalletLoaded _ _ ) ->
                     let
                         encodedSignatures =
                             JE.object
@@ -167,7 +163,7 @@ update msg model =
 
         ( MainAppMsg value, _ ) ->
             case ( JD.decodeValue mainAppMsgDecoder value, model ) of
-                ( Ok MainAppAskUtxos, WalletLoaded loadedWallet { errors } ) ->
+                ( Ok MainAppAskUtxos, WalletLoaded loadedWallet _ ) ->
                     -- Send available utxos back with toMainApp port
                     let
                         utxoCborEncoder =
@@ -193,7 +189,7 @@ update msg model =
                     in
                     ( model, toMainApp encodedUtxos )
 
-                ( Ok (MainAppAskSignature tx), WalletLoaded loadedWallet { errors } ) ->
+                ( Ok (MainAppAskSignature tx), WalletLoaded loadedWallet _ ) ->
                     -- Ask external wallet for partial signature, then later, send signature back
                     -- TODO: Update the wallet utxos with the content of the Tx
                     let
@@ -206,7 +202,7 @@ update msg model =
                 _ ->
                     ( model, Cmd.none )
 
-        ( ConnectButtonClicked { id }, WalletDiscovered descriptors ) ->
+        ( ConnectButtonClicked { id }, WalletDiscovered _ ) ->
             ( model, toExternalWallet (Cip30.encodeRequest (Cip30.enableWallet { id = id, extensions = [] })) )
 
         _ ->

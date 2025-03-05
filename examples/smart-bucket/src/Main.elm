@@ -2,7 +2,7 @@ port module Main exposing (..)
 
 import Browser
 import Bytes.Comparable as Bytes exposing (Bytes)
-import Cardano exposing (SpendSource(..), TxIntent(..), WitnessSource(..), dummyBytes)
+import Cardano exposing (SpendSource(..), TxIntent(..), WitnessSource(..))
 import Cardano.Address as Address exposing (Address, Credential(..), CredentialHash, NetworkId(..))
 import Cardano.Cip30 as Cip30
 import Cardano.Data as Data
@@ -221,7 +221,7 @@ update msg model =
                 -- Extract both parts (payment/stake) from our wallet address
                 ( myKeyCred, myStakeCred ) =
                     ( Address.extractPubKeyHash w.changeAddress
-                        |> Maybe.withDefault (dummyBytes 28 "ERROR")
+                        |> Maybe.withDefault (Bytes.dummy 28 "ERROR")
                     , Address.extractStakeCredential w.changeAddress
                     )
 
@@ -280,14 +280,14 @@ update msg model =
 
                 -- The datum of the new output bucket should contain the same owner,
                 -- and the index of the input utxo of the corresponding bucket that is spent.
-                outputBucket { spentInputs } =
+                outputBucket { inputs } =
                     { address = ctx.scriptAddress
                     , amount = Value.add spentBucket.amount bucketValueIncrease
                     , datumOption =
                         let
                             -- The input index is easy to find, just look for the correct ref in inputs
                             input_bucket_index =
-                                findIndex (\ref -> ref == bucketRef) spentInputs
+                                findIndex (\ref -> ref == bucketRef) inputs
                                     -- Put a huge default, just to make sure it’s found
                                     |> Maybe.withDefault 7000
                                     |> Integer.fromSafeInt
@@ -301,11 +301,11 @@ update msg model =
                 -- The redeemer needs to provide the index of that bucket we spend
                 -- in the list of the Tx inputs,
                 -- and the index of that new bucket we create in the Tx outputs.
-                redeemerData { spentInputs, createdOutputs } =
+                redeemerData { inputs, outputs } =
                     let
                         -- The input index is easy to find, just look for the correct ref
                         input_bucket_index =
-                            findIndex (\ref -> ref == bucketRef) spentInputs
+                            findIndex (\ref -> ref == bucketRef) inputs
                                 -- Put a huge default, just to make sure it’s found
                                 |> Maybe.withDefault 8000
 
@@ -313,7 +313,7 @@ update msg model =
                         -- it is the only one at the script address,
                         -- that contains a datum with the same owner as the input
                         output_bucket_index =
-                            findIndex (\o -> extractOwner o == bucketOwner) createdOutputs
+                            findIndex (\o -> extractOwner o == bucketOwner) outputs
                                 -- Put a huge default, just to make sure it’s found
                                 |> Maybe.withDefault 9000
                     in
@@ -336,7 +336,7 @@ update msg model =
                                 }
                             }
                         )
-                    , Spend <| FromWallet ctx.loadedWallet.changeAddress bucketValueIncrease
+                    , Spend <| FromWallet { address = ctx.loadedWallet.changeAddress, value = bucketValueIncrease, guaranteedUtxos = [] }
                     , SendToOutputAdvanced outputBucket
                     ]
                         |> Cardano.finalize ctx.localStateUtxos []
@@ -373,7 +373,7 @@ createBucket ({ localStateUtxos, myKeyCred, scriptAddress, loadedWallet, lockScr
 
         -- Transaction locking 2 Ada in a "bucket" UTxO at the script address
         createBucketTxAttempt =
-            [ Spend (FromWallet loadedWallet.changeAddress twoAda)
+            [ Spend <| FromWallet { address = ctx.loadedWallet.changeAddress, value = twoAda, guaranteedUtxos = [] }
             , SendToOutput
                 { address = scriptAddress
                 , amount = twoAda
