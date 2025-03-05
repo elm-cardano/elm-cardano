@@ -215,8 +215,8 @@ suite =
                             }
 
                     -- Build a redeemer that contains the index of the spent script input.
-                    redeemer inputsOutputs =
-                        List.indexedMap Tuple.pair inputsOutputs.spentInputs
+                    redeemer txBody =
+                        List.indexedMap Tuple.pair txBody.inputs
                             |> findSpendingUtxo
                             |> (Data.Int << Integer.fromSafeInt)
 
