@@ -101,7 +101,7 @@ inOrderedList maxInputCount context =
                         Nothing
 
                     else
-                        Just (Value.substract state.accumulatedAmount context.targetAmount |> Value.normalize)
+                        Just (Value.subtract state.accumulatedAmount context.targetAmount |> Value.normalize)
                 }
             )
 
@@ -174,7 +174,7 @@ largestFirst maxInputCount context =
                         Nothing
 
                     else
-                        Just (Value.substract state.accumulatedAmount context.targetAmount |> Value.normalize)
+                        Just (Value.subtract state.accumulatedAmount context.targetAmount |> Value.normalize)
                 }
             )
 
@@ -243,7 +243,7 @@ accumOutputsUntilDone ({ maxInputCount, selectedInputCount, accumulatedAmount, t
                     (UTxOBalanceInsufficient
                         { selectedUtxos = selectedOutputs
                         , missingValue =
-                            Value.substract targetAmount accumulatedAmount
+                            Value.subtract targetAmount accumulatedAmount
                                 |> Value.normalize
                         }
                     )
