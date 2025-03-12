@@ -1,6 +1,6 @@
 module Cardano.ScriptTests exposing (suite)
 
-import Bytes.Comparable exposing (Bytes)
+import Bytes.Comparable as Bytes exposing (Bytes)
 import Cardano.Address exposing (CredentialHash)
 import Cardano.Script as Script exposing (NativeScript(..), PlutusScript, Script)
 import Cbor.Test exposing (roundtrip)
@@ -15,6 +15,9 @@ suite =
     describe "Script"
         [ describe "toCbor >> fromCbor"
             [ roundtrip Script.toCbor Script.fromCbor fuzzer
+            ]
+        , describe "hash"
+            [ test "Plutus script" plutusScriptHashTest
             ]
         , describe "Bech32 encoding and decoding"
             [ test "encoding" bech32EncodingTest
@@ -60,6 +63,16 @@ plutusVersionFuzzer =
         , Fuzz.constant Script.PlutusV2
         , Fuzz.constant Script.PlutusV3
         ]
+
+
+
+-- Hashes
+
+
+plutusScriptHashTest : () -> Expectation
+plutusScriptHashTest _ =
+    Script.hash (Script.Plutus <| PlutusScript Script.PlutusV3 (Bytes.fromHexUnchecked "58b501010032323232323225333002323232323253330073370e900118041baa0011323232533300a3370e900018059baa00113322323300100100322533301100114a0264a66601e66e3cdd718098010020a5113300300300130130013758601c601e601e601e601e601e601e601e601e60186ea801cdd7180718061baa00116300d300e002300c001300937540022c6014601600460120026012004600e00260086ea8004526136565734aae7555cf2ab9f5742ae881"))
+        |> Expect.equal (Bytes.fromHexUnchecked "3ff0b1bb5815347c6f0c05328556d80c1f83ca47ac410d25ffb4a330")
 
 
 
