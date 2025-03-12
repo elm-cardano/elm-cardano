@@ -145,6 +145,10 @@ Many thanks to the person (they know who they are) who contributed the logo.
 
 ## Maintainer notes
 
+Make sure that versions of uplc-wasm are the same in:
+- `.github/build-setup.yml`
+- `.github/workflows/elm.yml`
+
 Cargo-dist TLDR:
 ```sh
 git commit -am "release: 0.2.0"
