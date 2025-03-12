@@ -1,5 +1,5 @@
 - name: Download the uplc-wasm archive
-  run: curl -LO 'https://github.com/mpizenberg/uplc-wasm/releases/download/v0.2.0/my-artifact.zip'
+  run: curl -LO 'https://github.com/mpizenberg/uplc-wasm/releases/download/v0.3.0/my-artifact.zip'
 
 - name: Unzip artifact
   run: unzip my-artifact.zip -d cli/pkg-uplc-wasm
