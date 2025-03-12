@@ -199,8 +199,28 @@ This is not valid CBOR, just concatenation of tag|scriptBytes.
 -}
 hash : Script -> Bytes CredentialHash
 hash script =
-    taggedEncoder script
-        |> E.encode
+    let
+        -- Almost like taggedEncoder function, but not exactly
+        hashEncoder : E.Encoder
+        hashEncoder =
+            case script of
+                Native nativeScript ->
+                    E.sequence
+                        [ E.int 0
+                        , encodeNativeScript nativeScript
+                        ]
+
+                Plutus plutusScript ->
+                    E.sequence
+                        [ encodePlutusVersion plutusScript.version
+
+                        -- Using raw bytes here because the Plutus script hash
+                        -- is computed with a single wrap of the flat script bytes,
+                        -- which is already wrapped inside the PlutusScript.script field
+                        , E.raw (Bytes.toBytes plutusScript.script)
+                        ]
+    in
+    E.encode hashEncoder
         |> Bytes.fromBytes
         |> Bytes.blake2b224
 

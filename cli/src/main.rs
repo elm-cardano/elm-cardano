@@ -9,8 +9,12 @@ use std::process::Command as ProcessCommand;
 #[derive(FromArgs, PartialEq, Debug)]
 /// Top-level command.
 struct Command {
+    /// print version information
+    #[argh(switch, short = 'v')]
+    version: bool,
+
     #[argh(subcommand)]
-    command: SubCommand,
+    command: Option<SubCommand>,
 }
 
 #[derive(FromArgs, PartialEq, Debug)]
@@ -83,12 +87,23 @@ struct RunSubCommand {
 }
 
 fn main() -> anyhow::Result<()> {
-    let Command { command }: Command = argh::from_env();
-    match command {
-        SubCommand::Init(_) => init_subcommand()?,
-        SubCommand::Make(make_args) => make_subcommand(make_args)?,
-        SubCommand::Postprocess(make_args) => postprocess_subcommand(make_args)?,
-        SubCommand::Run(run_args) => run_subcommand(run_args)?,
+    let cmd: Command = argh::from_env();
+
+    if cmd.version {
+        println!("{} {}", env!("CARGO_PKG_NAME"), env!("CARGO_PKG_VERSION"));
+        return Ok(());
+    }
+
+    match cmd.command {
+        Some(SubCommand::Init(_)) => init_subcommand()?,
+        Some(SubCommand::Make(make_args)) => make_subcommand(make_args)?,
+        Some(SubCommand::Postprocess(make_args)) => postprocess_subcommand(make_args)?,
+        Some(SubCommand::Run(run_args)) => run_subcommand(run_args)?,
+        None => {
+            // No subcommand was provided
+            println!("Run with --help for usage information");
+            std::process::exit(1);
+        }
     }
     Ok(())
 }

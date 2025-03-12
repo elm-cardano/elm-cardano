@@ -1,6 +1,6 @@
 module Cardano.Value exposing
     ( Value, zero, onlyLovelace, onlyToken
-    , add, addTokens, substract, atLeast, sum, normalize, compare
+    , add, addTokens, subtract, atLeast, sum, normalize, compare
     , encode, fromCbor
     )
 
@@ -8,7 +8,7 @@ module Cardano.Value exposing
 
 @docs Value, zero, onlyLovelace, onlyToken
 
-@docs add, addTokens, substract, atLeast, sum, normalize, compare
+@docs add, addTokens, subtract, atLeast, sum, normalize, compare
 
 @docs encode, fromCbor
 
@@ -75,7 +75,7 @@ addTokens tokens v =
     add { lovelace = Natural.zero, assets = tokens } v
 
 
-{-| Substract the second value from the first one: (v1 - v2).
+{-| subtract the second value from the first one: (v1 - v2).
 
 It’s a saturating difference, so if the second value is bigger than the first,
 the difference is clamped to 0.
@@ -85,8 +85,8 @@ So the result may contain assets with 0 amounts.
 To remove all 0 amount assets, call [normalize] on the substraction result.
 
 -}
-substract : Value -> Value -> Value
-substract v1 v2 =
+subtract : Value -> Value -> Value
+subtract v1 v2 =
     { lovelace = Natural.sub v1.lovelace v2.lovelace
     , assets = MultiAsset.map2 Natural.sub Natural.zero v1.assets v2.assets
     }
@@ -101,7 +101,7 @@ substract v1 v2 =
 -}
 atLeast : Value -> Value -> Bool
 atLeast minimum v =
-    normalize (substract minimum v) == zero
+    normalize (subtract minimum v) == zero
 
 
 {-| Sum the values of all tokens.
