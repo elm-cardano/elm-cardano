@@ -292,7 +292,11 @@ update msg model =
                                 (Script.plutusScriptFromBytes PlutusV3 unappliedScript.compiledCode)
                     in
                     case appliedScriptRes of
-                        Ok { plutusScript, hash } ->
+                        Ok plutusScript ->
+                            let
+                                hash =
+                                    Script.hash (Script.Plutus plutusScript)
+                            in
                             ( ParametersSet
                                 { loadedWallet = w
                                 , pickedUtxo = headUtxo
