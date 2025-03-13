@@ -148,6 +148,7 @@ Many thanks to the person (they know who they are) who contributed the logo.
 Make sure that versions of uplc-wasm are the same in:
 - `.github/build-setup.yml`
 - `.github/workflows/elm.yml`
+- `README.md`
 
 Cargo-dist TLDR:
 ```sh
@@ -163,9 +164,10 @@ Then download, extract and publish the npm package from the GitHub release page.
 npm publish
 ```
 
+Then merge the release commit into the `release` branch.
+
 Finally, don’t forget to update the docs published in the dedicated
 ```sh
-cd frontend/
 mkdir temp/
 elm make --docs temp/docs.json
 git co elm-doc-preview
