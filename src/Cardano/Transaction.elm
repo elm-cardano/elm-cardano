@@ -509,7 +509,7 @@ estimateRefScriptFeeSavings script =
                     { new | witnessSet = { newWitnessSet | nativeScripts = Just [ nativeScript ] } }
 
                 Script.Plutus plutusScript ->
-                    { new | witnessSet = { newWitnessSet | plutusV3Script = Just [ plutusScript.script ] } }
+                    { new | witnessSet = { newWitnessSet | plutusV3Script = Just [ Script.cborWrappedBytes plutusScript ] } }
 
         feesWithoutExecution tx =
             Natural.add

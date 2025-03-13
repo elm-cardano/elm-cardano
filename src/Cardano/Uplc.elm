@@ -18,11 +18,10 @@ module Cardano.Uplc exposing
 -}
 
 import Bytes.Comparable as Bytes exposing (Bytes)
-import Cardano.Address exposing (CredentialHash)
 import Cardano.Data as Data exposing (Data)
 import Cardano.Gov as Gov exposing (CostModels)
 import Cardano.Redeemer as Redeemer exposing (ExUnits, Redeemer)
-import Cardano.Script as Script exposing (PlutusScript, Script(..))
+import Cardano.Script as Script exposing (PlutusScript)
 import Cardano.Transaction as Transaction exposing (Transaction)
 import Cardano.Utxo as Utxo exposing (Output)
 import Cbor.Decode as CD
@@ -119,35 +118,19 @@ so you need to call the `elm-cardano` binary for compilation.
 More info on that in the `README` of the [elm-cardano GitHub repo](https://github.com/elm-cardano/elm-cardano).
 
 -}
-applyParamsToScript : List Data -> PlutusScript -> Result String { plutusScript : PlutusScript, hash : Bytes CredentialHash }
+applyParamsToScript : List Data -> PlutusScript -> Result String PlutusScript
 applyParamsToScript params script =
     let
         jsArguments =
             JE.object
                 [ ( "params", jsEncodeHelper (CE.list Data.toCborUplc) params )
-                , ( "script", JE.string <| Bytes.toHex script.script )
+                , ( "script", JE.string <| Bytes.toHex <| Script.cborWrappedBytes script )
                 ]
 
-        decodeAppliedScript : String -> Maybe { plutusScript : PlutusScript, hash : Bytes CredentialHash }
+        decodeAppliedScript : String -> Maybe PlutusScript
         decodeAppliedScript appliedScriptHex =
-            let
-                header =
-                    String.slice 0 2 appliedScriptHex
-
-                flat =
-                    if header == "58" then
-                        String.dropLeft 4 appliedScriptHex
-
-                    else
-                        String.dropLeft 6 appliedScriptHex
-
-                mScriptHash =
-                    Bytes.fromHex flat |> Maybe.map (\flatBytes -> Script.hash <| Plutus { script | script = flatBytes })
-            in
-            Maybe.map2
-                (\scriptBytes scriptHash -> { plutusScript = { script | script = scriptBytes }, hash = scriptHash })
-                (Bytes.fromHex appliedScriptHex)
-                mScriptHash
+            Bytes.fromHex appliedScriptHex
+                |> Maybe.map (Script.plutusScriptFromBytes (Script.plutusVersion script))
     in
     applyParamsToScriptKernel jsArguments
         |> Result.andThen (decodeAppliedScript >> Result.fromMaybe "Failed to decode the applied script.")

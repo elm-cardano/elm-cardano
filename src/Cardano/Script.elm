@@ -1,7 +1,9 @@
 module Cardano.Script exposing
     ( Script(..), NativeScript(..), PlutusScript, PlutusVersion(..), ScriptCbor, extractSigners, hash, fromBech32, toBech32
     , Reference, refFromBytes, refFromScript, refBytes, refScript, refHash
-    , toCbor, encodeNativeScript, encodePlutusScript
+    , nativeScriptFromBytes, nativeScriptBytes
+    , plutusScriptFromBytes, plutusVersion, cborWrappedBytes
+    , toCbor, encodeNativeScript
     , fromCbor, decodeNativeScript, jsonDecodeNativeScript
     )
 
@@ -12,12 +14,19 @@ module Cardano.Script exposing
 @docs Reference, refFromBytes, refFromScript, refBytes, refScript, refHash
 
 
-## Encoders
+## Scripts and Bytes
 
-@docs toCbor, encodeNativeScript, encodePlutusScript
+@docs nativeScriptFromBytes, nativeScriptBytes
+
+@docs plutusScriptFromBytes, plutusVersion, cborWrappedBytes
 
 
-## Decoders
+## CBOR Encoders
+
+@docs toCbor, encodeNativeScript
+
+
+## CBOR and JSON Decoders
 
 @docs fromCbor, decodeNativeScript, jsonDecodeNativeScript
 
@@ -140,10 +149,11 @@ type NativeScript
 
 {-| A plutus script.
 -}
-type alias PlutusScript =
-    { version : PlutusVersion
-    , script : Bytes ScriptCbor
-    }
+type PlutusScript
+    = PlutusScript
+        { version : PlutusVersion
+        , flatBytes : Bytes Flat
+        }
 
 
 {-| The plutus version.
@@ -155,9 +165,16 @@ type PlutusVersion
 
 
 {-| Phantom type describing the kind of bytes within a [PlutusScript] object.
+They are supposed to be the Flat bytes wrapped into a single CBOR byte string.
 -}
 type ScriptCbor
     = ScriptCbor Never
+
+
+{-| Phantom type describing the Flat encoding of Plutus scripts.
+-}
+type Flat
+    = Flat Never
 
 
 {-| Extract all mentionned pubkeys in the Native script.
@@ -190,6 +207,119 @@ extractSignersHelper nativeScript accum =
             accum
 
 
+{-| Get the bytes representation of a native script.
+
+This is just a helper function doing the following:
+
+    nativeScriptBytes nativeScript =
+        encodeNativeScript nativeScript
+            |> Cbor.Encode.encode
+            |> Bytes.fromBytes
+
+-}
+nativeScriptBytes : NativeScript -> Bytes a
+nativeScriptBytes nativeScript =
+    encodeNativeScript nativeScript
+        |> E.encode
+        |> Bytes.fromBytes
+
+
+{-| Decode a native script from its bytes representation.
+
+This is just a helper function doing the following:
+
+    Cbor.Decode.decode decodeNativeScript (Bytes.toBytes bytes)
+
+-}
+nativeScriptFromBytes : Bytes a -> Maybe NativeScript
+nativeScriptFromBytes bytes =
+    D.decode decodeNativeScript (Bytes.toBytes bytes)
+
+
+{-| Create a PlutusScript from its bytes representation.
+
+Depending on where the bytes come from, they can have many different shapes.
+At the lowest level, Plutus scripts are encoded with a format called [Flat][flat].
+But since Cardano uses CBOR everywhere else, the Flat bytes are usually wrapped in a CBOR byte string.
+But that’s not the only shape they can have.
+Indeed, when transmitted in transactions like in a UTxO script reference,
+they are usually packed into a pair containing an integer tag for the Plutus version,
+and the CBOR bytes themselves, re-encoded as Bytes in the pair!
+Meaning the script Flat bytes might get a double CBOR byte wrap.
+
+And if that wasn’t confusing enough, when computing the hash of a Plutus script,
+it’s not even the above CBOR tagged pair that is used.
+Instead it is the raw concatenation of the tag and the single-wrapped Flat bytes.
+
+Summary, with pseudo-code:
+
+1.  `flat_bytes`: the actual Plutus script bytes.
+2.  `cbor_bytes(flat_bytes)`: the thing that is provided in the `plutus.json` blueprint of an Aiken compilation.
+3.  `cbor_bytes(cbor_bytes(flat_bytes))`: the output you might see from some Cardano CLI tools.
+4.  `tag + cbor_bytes(flat_bytes)`: the input of the Blake2b-224 hash to compute the script hash.
+5.  `cbor_array[cbor_int(tag), cbor_bytes(cbor_bytes(flat_bytes))]`: the thing transmitted in UTxO script references.
+
+It’s confusing and error prone, so we made the `PlutusScript` type opaque,
+and you basically need to call this function to convert from bytes,
+which will smartly figure it out.
+
+WARNING: This function is only for shapes (1, 2, 3).
+Shape (4) is never used except temporarily to compute hashes.
+Shape (5) is supposed to be decoded with the `Script.fromCbor` decoder:
+`D.decode Script.fromCbor scriptCborBytes`.
+
+If no particular shape is recognized, this function will assume the whole bytes are the Flat bytes,
+because we don’t have a Flat decoder in Elm.
+
+[flat]: https://quid2.org/docs/Flat.pdf
+
+-}
+plutusScriptFromBytes : PlutusVersion -> Bytes a -> PlutusScript
+plutusScriptFromBytes version bytes =
+    case D.decode D.bytes (Bytes.toBytes bytes) of
+        Nothing ->
+            PlutusScript
+                { version = version
+                , flatBytes = Bytes.fromHexUnchecked <| Bytes.toHex bytes
+                }
+
+        Just wrappedBytes ->
+            case D.decode D.bytes wrappedBytes of
+                Nothing ->
+                    PlutusScript
+                        { version = version
+                        , flatBytes = Bytes.fromBytes wrappedBytes
+                        }
+
+                Just flatBytes ->
+                    PlutusScript
+                        { version = version
+                        , flatBytes = Bytes.fromBytes flatBytes
+                        }
+
+
+{-| Extract the PlutusVersion from a PlutusScript.
+-}
+plutusVersion : PlutusScript -> PlutusVersion
+plutusVersion (PlutusScript plutusScript) =
+    plutusScript.version
+
+
+{-| Extract the script bytes, wrapped in a CBOR byte string,
+So basically the same thing that you would get in the `plutus.json` blueprint file.
+
+This is returning: `cbor_bytes(flat_bytes)`.
+
+-}
+cborWrappedBytes : PlutusScript -> Bytes ScriptCbor
+cborWrappedBytes (PlutusScript plutusScript) =
+    plutusScript.flatBytes
+        |> Bytes.toBytes
+        |> E.bytes
+        |> E.encode
+        |> Bytes.fromBytes
+
+
 {-| Compute the script hash.
 
 The script type tag must be prepended before hashing,
@@ -210,14 +340,12 @@ hash script =
                         , encodeNativeScript nativeScript
                         ]
 
-                Plutus plutusScript ->
+                Plutus (PlutusScript plutusScript) ->
                     E.sequence
                         [ encodePlutusVersion plutusScript.version
 
-                        -- Using raw bytes here because the Plutus script hash
-                        -- is computed with a single wrap of the flat script bytes,
-                        -- which is already wrapped inside the PlutusScript.script field
-                        , E.raw (Bytes.toBytes plutusScript.script)
+                        -- Single CBOR wrap of the Flat bytes
+                        , E.bytes (Bytes.toBytes plutusScript.flatBytes)
                         ]
     in
     E.encode hashEncoder
@@ -267,10 +395,14 @@ taggedEncoder script =
                 , encodeNativeScript nativeScript
                 ]
 
-        Plutus plutusScript ->
+        Plutus (PlutusScript plutusScript) ->
             E.sequence
                 [ encodePlutusVersion plutusScript.version
-                , encodePlutusScript plutusScript
+
+                -- Double CBOR wrapping of the script flat bytes
+                , E.bytes (Bytes.toBytes plutusScript.flatBytes)
+                    |> E.encode
+                    |> E.bytes
                 ]
 
 
@@ -312,13 +444,6 @@ encodeNativeScript nativeScript =
                 ]
 
 
-{-| Cbor Encoder for PlutusScript
--}
-encodePlutusScript : PlutusScript -> E.Encoder
-encodePlutusScript { script } =
-    Bytes.toCbor script
-
-
 encodePlutusVersion : PlutusVersion -> E.Encoder
 encodePlutusVersion version =
     E.int <|
@@ -354,16 +479,31 @@ fromCbor =
                         D.map Native decodeNativeScript
 
                     1 ->
-                        D.map (\s -> Plutus { version = PlutusV1, script = Bytes.fromBytes s }) D.bytes
+                        D.map Plutus (plutusFromCbor PlutusV1)
 
                     2 ->
-                        D.map (\s -> Plutus { version = PlutusV2, script = Bytes.fromBytes s }) D.bytes
+                        D.map Plutus (plutusFromCbor PlutusV2)
 
                     3 ->
-                        D.map (\s -> Plutus { version = PlutusV3, script = Bytes.fromBytes s }) D.bytes
+                        D.map Plutus (plutusFromCbor PlutusV3)
 
                     _ ->
                         D.failWith ("Unknown script version: " ++ String.fromInt v)
+            )
+
+
+plutusFromCbor : PlutusVersion -> D.Decoder PlutusScript
+plutusFromCbor version =
+    D.bytes
+        |> D.andThen
+            -- Double CBOR unwrapping of the script flat bytes
+            (\wrappedBytes ->
+                case D.decode D.bytes wrappedBytes of
+                    Just flatBytes ->
+                        D.succeed (PlutusScript { version = version, flatBytes = Bytes.fromBytes flatBytes })
+
+                    Nothing ->
+                        D.failWith ("Failed to decode Plutus script: " ++ Bytes.toHex (Bytes.fromBytes wrappedBytes))
             )
 
 
