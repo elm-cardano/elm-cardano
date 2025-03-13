@@ -844,7 +844,7 @@ prettyScript script =
             "NativeScript: " ++ prettyCbor Script.encodeNativeScript nativeScript
 
         Script.Plutus plutusScript ->
-            "PlutusScript: " ++ prettyCbor Script.encodePlutusScript plutusScript
+            "PlutusScript: " ++ Bytes.toHex (Script.cborWrappedBytes plutusScript)
 
 
 prettyInput ref =
