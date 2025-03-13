@@ -8,7 +8,7 @@ import Cardano.Address as Address exposing (Address, Credential(..), CredentialH
 import Cardano.Cip30 as Cip30
 import Cardano.Data as Data
 import Cardano.MultiAsset exposing (AssetName)
-import Cardano.Script exposing (PlutusVersion(..), ScriptCbor)
+import Cardano.Script as Script exposing (PlutusVersion(..), ScriptCbor)
 import Cardano.Transaction as Tx exposing (Transaction)
 import Cardano.Uplc as Uplc
 import Cardano.Utxo as Utxo exposing (DatumOption(..), Output, OutputReference, TransactionId, outputReferenceToData)
@@ -289,9 +289,7 @@ update msg model =
                                 [ Data.Bytes tokenNameBytes
                                 , outputReferenceToData headUtxo
                                 ]
-                                { version = PlutusV3
-                                , script = unappliedScript.compiledCode
-                                }
+                                (Script.plutusScriptFromBytes PlutusV3 unappliedScript.compiledCode)
                     in
                     case appliedScriptRes of
                         Ok { plutusScript, hash } ->
@@ -302,7 +300,7 @@ update msg model =
                                 , localStateUtxos = w.utxos
                                 , lockScript =
                                     { hash = hash
-                                    , compiledCode = plutusScript.script
+                                    , compiledCode = Script.cborWrappedBytes plutusScript
                                     }
                                 , scriptAddress =
                                     Address.Shelley
