@@ -1,6 +1,7 @@
 module Cardano.Script exposing
     ( Script(..), NativeScript(..), PlutusScript, PlutusVersion(..), ScriptCbor, extractSigners, hash, fromBech32, toBech32
     , Reference, refFromBytes, refFromScript, refBytes, refScript, refHash
+    , nativeScriptFromBytes, nativeScriptBytes
     , plutusScriptFromBytes, plutusVersion, cborWrappedBytes
     , toCbor, encodeNativeScript
     , fromCbor, decodeNativeScript, jsonDecodeNativeScript
@@ -13,17 +14,19 @@ module Cardano.Script exposing
 @docs Reference, refFromBytes, refFromScript, refBytes, refScript, refHash
 
 
-## Plutus Scripts
+## Scripts and Bytes
+
+@docs nativeScriptFromBytes, nativeScriptBytes
 
 @docs plutusScriptFromBytes, plutusVersion, cborWrappedBytes
 
 
-## Encoders
+## CBOR Encoders
 
 @docs toCbor, encodeNativeScript
 
 
-## Decoders
+## CBOR and JSON Decoders
 
 @docs fromCbor, decodeNativeScript, jsonDecodeNativeScript
 
@@ -202,6 +205,35 @@ extractSignersHelper nativeScript accum =
 
         InvalidHereafter _ ->
             accum
+
+
+{-| Get the bytes representation of a native script.
+
+This is just a helper function doing the following:
+
+    nativeScriptBytes nativeScript =
+        encodeNativeScript nativeScript
+            |> Cbor.Encode.encode
+            |> Bytes.fromBytes
+
+-}
+nativeScriptBytes : NativeScript -> Bytes a
+nativeScriptBytes nativeScript =
+    encodeNativeScript nativeScript
+        |> E.encode
+        |> Bytes.fromBytes
+
+
+{-| Decode a native script from its bytes representation.
+
+This is just a helper function doing the following:
+
+    Cbor.Decode.decode decodeNativeScript (Bytes.toBytes bytes)
+
+-}
+nativeScriptFromBytes : Bytes a -> Maybe NativeScript
+nativeScriptFromBytes bytes =
+    D.decode decodeNativeScript (Bytes.toBytes bytes)
 
 
 {-| Create a PlutusScript from its bytes representation.
