@@ -1,6 +1,7 @@
 module Cardano.Script exposing
     ( Script(..), NativeScript(..), PlutusScript, PlutusVersion(..), ScriptCbor, extractSigners, hash, fromBech32, toBech32
     , Reference, refFromBytes, refFromScript, refBytes, refScript, refHash
+    , plutusScriptFromBytes, plutusVersion, cborWrappedBytes
     , toCbor, encodeNativeScript, encodePlutusScript
     , fromCbor, decodeNativeScript, jsonDecodeNativeScript
     )
@@ -10,6 +11,11 @@ module Cardano.Script exposing
 @docs Script, NativeScript, PlutusScript, PlutusVersion, ScriptCbor, extractSigners, hash, fromBech32, toBech32
 
 @docs Reference, refFromBytes, refFromScript, refBytes, refScript, refHash
+
+
+## Plutus Scripts
+
+@docs plutusScriptFromBytes, plutusVersion, cborWrappedBytes
 
 
 ## Encoders
@@ -140,10 +146,11 @@ type NativeScript
 
 {-| A plutus script.
 -}
-type alias PlutusScript =
-    { version : PlutusVersion
-    , script : Bytes ScriptCbor
-    }
+type PlutusScript
+    = PlutusScript
+        { version : PlutusVersion
+        , script : Bytes ScriptCbor
+        }
 
 
 {-| The plutus version.
@@ -190,6 +197,33 @@ extractSignersHelper nativeScript accum =
             accum
 
 
+{-| Create a PlutusScript from its bytes representation.
+-}
+plutusScriptFromBytes : PlutusVersion -> Bytes ScriptCbor -> PlutusScript
+plutusScriptFromBytes version bytes =
+    PlutusScript
+        { version = version
+        , script = bytes
+        }
+
+
+{-| Extract the PlutusVersion from a PlutusScript.
+-}
+plutusVersion : PlutusScript -> PlutusVersion
+plutusVersion (PlutusScript plutusScript) =
+    plutusScript.version
+
+
+{-| Extract the script bytes, wrapped in a CBOR byte string.
+
+This is returning: `CBOR_bytes(flat_script_bytes)`.
+
+-}
+cborWrappedBytes : PlutusScript -> Bytes ScriptCbor
+cborWrappedBytes (PlutusScript plutusScript) =
+    plutusScript.script
+
+
 {-| Compute the script hash.
 
 The script type tag must be prepended before hashing,
@@ -210,7 +244,7 @@ hash script =
                         , encodeNativeScript nativeScript
                         ]
 
-                Plutus plutusScript ->
+                Plutus (PlutusScript plutusScript) ->
                     E.sequence
                         [ encodePlutusVersion plutusScript.version
 
@@ -267,10 +301,10 @@ taggedEncoder script =
                 , encodeNativeScript nativeScript
                 ]
 
-        Plutus plutusScript ->
+        Plutus (PlutusScript plutusScript) ->
             E.sequence
                 [ encodePlutusVersion plutusScript.version
-                , encodePlutusScript plutusScript
+                , encodePlutusScript (PlutusScript plutusScript)
                 ]
 
 
@@ -315,7 +349,7 @@ encodeNativeScript nativeScript =
 {-| Cbor Encoder for PlutusScript
 -}
 encodePlutusScript : PlutusScript -> E.Encoder
-encodePlutusScript { script } =
+encodePlutusScript (PlutusScript { script }) =
     Bytes.toCbor script
 
 
@@ -354,13 +388,13 @@ fromCbor =
                         D.map Native decodeNativeScript
 
                     1 ->
-                        D.map (\s -> Plutus { version = PlutusV1, script = Bytes.fromBytes s }) D.bytes
+                        D.map (\s -> Plutus <| PlutusScript { version = PlutusV1, script = Bytes.fromBytes s }) D.bytes
 
                     2 ->
-                        D.map (\s -> Plutus { version = PlutusV2, script = Bytes.fromBytes s }) D.bytes
+                        D.map (\s -> Plutus <| PlutusScript { version = PlutusV2, script = Bytes.fromBytes s }) D.bytes
 
                     3 ->
-                        D.map (\s -> Plutus { version = PlutusV3, script = Bytes.fromBytes s }) D.bytes
+                        D.map (\s -> Plutus <| PlutusScript { version = PlutusV3, script = Bytes.fromBytes s }) D.bytes
 
                     _ ->
                         D.failWith ("Unknown script version: " ++ String.fromInt v)
