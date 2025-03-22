@@ -928,7 +928,6 @@ witnessSet59fd3532 =
     }
 
 
-
 {-| Test decoding an output containing an invalid reference script (not cbor-wrapped).
 -}
 decodeOutputa4005839 : Test
