@@ -415,7 +415,7 @@ update msg model =
                             { drep =
                                 WithScript lockScript.hash <|
                                     PlutusWitness
-                                        { script = ( PlutusV3, WitnessValue lockScript.compiledCode )
+                                        { script = ( PlutusV3, WitnessByValue lockScript.compiledCode )
                                         , redeemerData = \_ -> Data.Int Integer.zero
                                         , requiredSigners = []
                                         }
@@ -453,7 +453,7 @@ update msg model =
                         (WithDrepCred <|
                             WithScript ctx.lockScript.hash <|
                                 PlutusWitness
-                                    { script = ( PlutusV3, WitnessValue ctx.lockScript.compiledCode )
+                                    { script = ( PlutusV3, WitnessByValue ctx.lockScript.compiledCode )
                                     , redeemerData = \_ -> Data.Int Integer.zero
                                     , requiredSigners = []
                                     }
@@ -507,7 +507,7 @@ update msg model =
                             { drep =
                                 WithScript ctx.lockScript.hash <|
                                     PlutusWitness
-                                        { script = ( PlutusV3, WitnessValue ctx.lockScript.compiledCode )
+                                        { script = ( PlutusV3, WitnessByValue ctx.lockScript.compiledCode )
                                         , redeemerData = \_ -> Data.Int Integer.zero
                                         , requiredSigners = []
                                         }

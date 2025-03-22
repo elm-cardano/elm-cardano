@@ -241,7 +241,7 @@ suite =
                                 { spentInput = utxoBeingSpent
                                 , datumWitness = Nothing
                                 , plutusScriptWitness =
-                                    { script = ( Script.plutusVersion lock.script, WitnessValue <| Script.cborWrappedBytes lock.script )
+                                    { script = ( Script.plutusVersion lock.script, WitnessByValue <| Script.cborWrappedBytes lock.script )
                                     , redeemerData = redeemer
                                     , requiredSigners = [ myKeyCred ]
                                     }

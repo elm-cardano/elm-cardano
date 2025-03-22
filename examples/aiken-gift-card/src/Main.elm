@@ -346,7 +346,7 @@ update msg model =
                             { spentInput = OutputReference txId 0
                             , datumWitness = Nothing
                             , plutusScriptWitness =
-                                { script = ( PlutusV3, WitnessValue ctx.lockScript.compiledCode )
+                                { script = ( PlutusV3, WitnessByValue ctx.lockScript.compiledCode )
                                 , redeemerData = \_ -> Data.Constr Natural.zero []
                                 , requiredSigners = []
                                 }
@@ -464,7 +464,7 @@ makeMintBurnIntent lockScript tokenName forMint =
         , assets = BytesMap.singleton tokenName mintQuantity
         , scriptWitness =
             PlutusWitness
-                { script = ( PlutusV3, WitnessValue lockScript.compiledCode )
+                { script = ( PlutusV3, WitnessByValue lockScript.compiledCode )
                 , redeemerData =
                     \_ ->
                         if forMint then

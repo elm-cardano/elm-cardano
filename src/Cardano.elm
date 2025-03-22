@@ -539,9 +539,8 @@ type alias PlutusScriptWitness =
 {-| Represents different sources for witnesses.
 -}
 type WitnessSource a
-    = WitnessValue a
-      -- TODO: rename WitnessByValue and WitnessByReference ???
-    | WitnessReference OutputReference
+    = WitnessByValue a
+    | WitnessByReference OutputReference
 
 
 {-| Extract the [OutputReference] from a witness source,
@@ -550,10 +549,10 @@ if passed by reference. Return [Nothing] if passed by value.
 extractWitnessRef : WitnessSource a -> Maybe OutputReference
 extractWitnessRef witnessSource =
     case witnessSource of
-        WitnessValue _ ->
+        WitnessByValue _ ->
             Nothing
 
-        WitnessReference ref ->
+        WitnessByReference ref ->
             Just ref
 
 
@@ -1771,10 +1770,10 @@ dedupWithCbor encode items =
 encodeWitnessSource : (a -> E.Encoder) -> WitnessSource a -> E.Encoder
 encodeWitnessSource encode witnessSource =
     case witnessSource of
-        WitnessValue a ->
+        WitnessByValue a ->
             encode a
 
-        WitnessReference ref ->
+        WitnessByReference ref ->
             Utxo.encodeOutputReference ref
 
 
@@ -2659,10 +2658,10 @@ updateLocalState txId tx oldState =
 witnessSourceToResult : WitnessSource a -> Result a OutputReference
 witnessSourceToResult witnessSource =
     case witnessSource of
-        WitnessValue value ->
+        WitnessByValue value ->
             Err value
 
-        WitnessReference ref ->
+        WitnessByReference ref ->
             Ok ref
 
 
