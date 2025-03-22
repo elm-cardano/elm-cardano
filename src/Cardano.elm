@@ -403,9 +403,9 @@ import Cardano.Utils exposing (UnitInterval)
 import Cardano.Utxo as Utxo exposing (Output, OutputReference, TransactionId)
 import Cardano.Value as Value exposing (Value)
 import Cbor.Encode as E
-import Dict
 import Dict.Any exposing (AnyDict)
 import Integer exposing (Integer)
+import List.Extra
 import Natural exposing (Natural)
 import Set
 
@@ -1657,6 +1657,12 @@ processIntents govState localStateUtxos txIntents =
                                 |> List.map (\signer -> ( signer, () ))
                                 |> Map.fromList
                                 |> Map.keys
+
+                        witnessToHex encoder source =
+                            encodeWitnessSource encoder source
+                                |> E.encode
+                                |> Bytes.fromBytes
+                                |> Bytes.toHex
                     in
                     { freeInputs = preProcessedIntents.freeInputs
                     , freeOutputs = preProcessedIntents.freeOutputs
@@ -1666,9 +1672,9 @@ processIntents govState localStateUtxos txIntents =
 
                     -- TODO: an improvement would consist in fetching the referenced from the local state utxos,
                     -- and extract the script values, to even remove duplicates both in ref and values.
-                    , nativeScriptSources = dedupWithCbor (encodeWitnessSource Script.encodeNativeScript) preProcessedIntents.nativeScriptSources
-                    , plutusScriptSources = dedupWithCbor (Tuple.second >> encodeWitnessSource Bytes.toCbor) plutusScriptSources
-                    , datumSources = dedupWithCbor (encodeWitnessSource Data.toCbor) preProcessedIntents.datumSources
+                    , nativeScriptSources = List.Extra.uniqueBy (witnessToHex Script.encodeNativeScript) preProcessedIntents.nativeScriptSources
+                    , plutusScriptSources = List.Extra.uniqueBy (Tuple.second >> witnessToHex Bytes.toCbor) plutusScriptSources
+                    , datumSources = List.Extra.uniqueBy (witnessToHex Data.toCbor) preProcessedIntents.datumSources
                     , expectedSigners = expectedSigners
                     , requiredSigners = requiredSigners
                     , totalMinted = totalMintedAndBurned
@@ -1756,15 +1762,6 @@ proposalRedeemer govAction =
 
         _ ->
             Nothing
-
-
-{-| Helper function
--}
-dedupWithCbor : (a -> E.Encoder) -> List a -> List a
-dedupWithCbor encode items =
-    List.map (\a -> ( E.encode (encode a) |> Bytes.fromBytes |> Bytes.toHex, a )) items
-        |> Dict.fromList
-        |> Dict.values
 
 
 encodeWitnessSource : (a -> E.Encoder) -> WitnessSource a -> E.Encoder
