@@ -52,7 +52,6 @@ type Reference
     = Reference
         { scriptHash : Bytes CredentialHash
         , bytes : Bytes Script
-        , script : Script
         }
 
 
@@ -72,13 +71,12 @@ refFromBytes bytes =
         elmBytes =
             Bytes.toBytes bytes
     in
-    case ( D.decode fromCbor elmBytes, D.decode taggedRawScriptDecoder elmBytes ) of
-        ( Just script, Just taggedScriptBytes ) ->
+    case D.decode taggedRawScriptDecoder elmBytes of
+        Just taggedScriptBytes ->
             Just <|
                 Reference
                     { scriptHash = Bytes.blake2b224 taggedScriptBytes
                     , bytes = bytes
-                    , script = script
                     }
 
         _ ->
@@ -92,15 +90,14 @@ refFromScript script =
     Reference
         { scriptHash = hash script
         , bytes = Bytes.fromBytes <| E.encode (toCbor script)
-        , script = script
         }
 
 
 {-| Extract the Script from a script Reference.
 -}
-refScript : Reference -> Script
-refScript (Reference { script }) =
-    script
+refScript : Reference -> Maybe Script
+refScript (Reference { bytes }) =
+    D.decode fromCbor (Bytes.toBytes bytes)
 
 
 {-| Extract the Bytes from a script Reference.
