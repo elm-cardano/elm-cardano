@@ -281,7 +281,7 @@ okTxBuilding =
                 [ MintBurn
                     { policyId = dog.policyId
                     , assets = Map.singleton dog.assetName Integer.one
-                    , scriptWitness = NativeWitness { script = WitnessReference dog.scriptRef, expectedSigners = [] }
+                    , scriptWitness = NativeWitness { script = WitnessByReference dog.scriptRef, expectedSigners = [] }
                     }
                 , SendTo testAddr.me (Value.onlyToken dog.policyId dog.assetName Natural.one)
 
@@ -295,7 +295,7 @@ okTxBuilding =
                 , MintBurn
                     { policyId = cat.policyId
                     , assets = Map.singleton cat.assetName Integer.negativeOne
-                    , scriptWitness = NativeWitness { script = WitnessReference cat.scriptRef, expectedSigners = [] }
+                    , scriptWitness = NativeWitness { script = WitnessByReference cat.scriptRef, expectedSigners = [] }
                     }
                 ]
             }
@@ -401,7 +401,7 @@ okTxBuilding =
                         { spentInput = utxoBeingSpent
                         , datumWitness = Nothing
                         , plutusScriptWitness =
-                            { script = ( PlutusV3, WitnessValue lock.scriptBytes )
+                            { script = ( PlutusV3, WitnessByValue lock.scriptBytes )
                             , redeemerData = redeemer
                             , requiredSigners = [ myKeyCred ]
                             }
@@ -532,7 +532,7 @@ okTxBuilding =
                     Just
                         { policyId = Bytes.fromHexUnchecked "fa24fb305126805cf2164c161d852a0e7330cf988f1fe558cf7d4a64"
                         , plutusVersion = PlutusV3
-                        , scriptWitness = WitnessValue guardrailsScriptBytes
+                        , scriptWitness = WitnessByValue guardrailsScriptBytes
                         }
                 , lastEnactedCommitteeAction = Nothing
                 , lastEnactedConstitutionAction = Nothing
@@ -682,7 +682,7 @@ okTxBuilding =
                 WithPoolCred (dummyCredentialHash "poolId")
 
             withMyDrepScript =
-                WithDrepCred (WithScript drepScriptHash <| NativeWitness { script = WitnessValue drepScript, expectedSigners = [] })
+                WithDrepCred (WithScript drepScriptHash <| NativeWitness { script = WitnessByValue drepScript, expectedSigners = [] })
           in
           okTxTest "Test with multiple votes"
             { govState = Cardano.emptyGovernanceState
@@ -1027,7 +1027,7 @@ failTxBuilding =
                         { spentInput = utxoBeingSpent
                         , datumWitness = Nothing
                         , plutusScriptWitness =
-                            { script = ( PlutusV3, WitnessValue lock.scriptBytes )
+                            { script = ( PlutusV3, WitnessByValue lock.scriptBytes )
                             , redeemerData = redeemer
                             , requiredSigners = [ myKeyCred ]
                             }

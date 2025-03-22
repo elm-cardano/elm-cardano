@@ -328,7 +328,7 @@ update msg model =
                             { spentInput = bucketRef
                             , datumWitness = Nothing
                             , plutusScriptWitness =
-                                { script = ( PlutusV3, WitnessValue ctx.lockScript.compiledCode )
+                                { script = ( PlutusV3, WitnessByValue ctx.lockScript.compiledCode )
                                 , redeemerData = redeemerData
 
                                 -- NO SIGNATURE: it’s the actual purpose of these "buckets"

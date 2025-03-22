@@ -380,7 +380,7 @@ update msg model =
                             { spentInput = OutputReference txId 0
                             , datumWitness = Nothing
                             , plutusScriptWitness =
-                                { script = ( PlutusV3, WitnessValue ctx.lockScript.compiledCode )
+                                { script = ( PlutusV3, WitnessByValue ctx.lockScript.compiledCode )
                                 , redeemerData = \_ -> redeemer
                                 , requiredSigners = [ unlockKey ]
                                 }
