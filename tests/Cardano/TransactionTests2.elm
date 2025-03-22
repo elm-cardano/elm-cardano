@@ -44,6 +44,7 @@ suite =
         , decodeOutputfd83f4f9
         , decode437389ef
         , decode59fd3532
+        , decodeOutputa4005839
         ]
 
 
@@ -925,6 +926,18 @@ witnessSet59fd3532 =
                   }
                 ]
     }
+
+
+{-| Test decoding an output containing an invalid reference script (not cbor-wrapped).
+-}
+decodeOutputa4005839 : Test
+decodeOutputa4005839 =
+    test "Output a4005839... (ref script not cbor-wrapped)" <|
+        \_ ->
+            Bytes.fromHexUnchecked "a40058390068c14f253ceb1934ae8c69c68036273b425bdd3c86987c4d061e119cc043835c5336be17159088c24bf19b3a497106b3d4f41c95a1e860fb01821a01f97904a1581cd4c84babcb60f1e301fa4fd1c1759a2ebcd1d346988418ac459088e4a15653746172636164615265666572656e6365546f6b656e01028201d81846455374616d7003d818458201420101"
+                |> Bytes.toBytes
+                |> D.decode Utxo.decodeOutput
+                |> Expect.notEqual Nothing
 
 
 

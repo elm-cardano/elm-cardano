@@ -831,11 +831,14 @@ prettyCbor toCbor x =
 
 prettyScriptRef scriptRef =
     case Script.refScript scriptRef of
-        Script.Native _ ->
+        Just (Script.Native _) ->
             "NativeScript: " ++ Bytes.toHex (Script.refBytes scriptRef)
 
-        Script.Plutus _ ->
+        Just (Script.Plutus _) ->
             "PlutusScript: " ++ Bytes.toHex (Script.refBytes scriptRef)
+
+        Nothing ->
+            "Invalid script ref: " ++ Bytes.toHex (Script.refBytes scriptRef)
 
 
 prettyScript script =
