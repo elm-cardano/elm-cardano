@@ -2,7 +2,7 @@ module Cardano.Data exposing (Data(..), hash, fromCbor, toCbor, toCborUplc)
 
 {-| Handling Cardano Data objects.
 
-@docs Data, hash, fromCbor, toCbor, toCborUplc, hash
+@docs Data, hash, fromCbor, toCbor, toCborUplc
 
 -}
 
