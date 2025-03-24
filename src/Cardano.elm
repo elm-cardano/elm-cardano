@@ -396,17 +396,19 @@ import Cardano.Metadatum exposing (Metadatum)
 import Cardano.MultiAsset as MultiAsset exposing (AssetName, MultiAsset, PolicyId)
 import Cardano.Pool as Pool
 import Cardano.Redeemer as Redeemer exposing (Redeemer, RedeemerTag)
-import Cardano.Script as Script exposing (NativeScript, PlutusVersion(..), ScriptCbor)
+import Cardano.Script as Script exposing (NativeScript, PlutusVersion(..), Script, ScriptCbor)
 import Cardano.Transaction as Transaction exposing (Certificate(..), Transaction, TransactionBody, VKeyWitness, WitnessSet)
 import Cardano.Uplc as Uplc
 import Cardano.Utils exposing (UnitInterval)
-import Cardano.Utxo as Utxo exposing (Output, OutputReference, TransactionId)
+import Cardano.Utxo as Utxo exposing (DatumOption(..), Output, OutputReference, TransactionId)
 import Cardano.Value as Value exposing (Value)
+import Cbor.Decode as D
 import Cbor.Encode as E
 import Dict.Any exposing (AnyDict)
 import Integer exposing (Integer)
 import List.Extra
 import Natural exposing (Natural)
+import Result.Extra
 import Set
 
 
@@ -635,6 +637,13 @@ type TxFinalizationError
     | InsufficientManualFee { declared : Natural, computed : Natural }
     | NotEnoughMinAda String
     | ReferenceOutputsMissingFromLocalState (List OutputReference)
+    | MissingReferenceScript OutputReference
+    | InvalidScriptRef OutputReference (Bytes Script) String
+    | InvalidWalletAddress Address String
+    | ScriptHashMismatch { expected : Bytes CredentialHash, witness : Bytes CredentialHash } String
+    | ExtraneousDatumWitness (WitnessSource Data) String
+    | MissingDatumWitness (Bytes Utxo.DatumHash) String
+    | DatumHashMismatch { expected : Bytes Utxo.DatumHash, witness : Bytes Utxo.DatumHash } String
     | FailedToPerformCoinSelection CoinSelection.Error
     | CollateralSelectionError CoinSelection.Error
     | DuplicatedMetadataTags Int
@@ -1614,6 +1623,19 @@ processIntents govState localStateUtxos txIntents =
 
     else
         let
+            spendings : List SpendSource
+            spendings =
+                txIntents
+                    |> List.filterMap
+                        (\intent ->
+                            case intent of
+                                Spend source ->
+                                    Just source
+
+                                _ ->
+                                    Nothing
+                        )
+
             totalMintedAndBurned : MultiAsset Integer
             totalMintedAndBurned =
                 List.map (\m -> Map.singleton m.policyId m.assets) preProcessedIntents.mints
@@ -1641,6 +1663,7 @@ processIntents govState localStateUtxos txIntents =
         in
         validMinAdaPerOutput preCreatedOutputs.outputs
             |> Result.mapError NotEnoughMinAda
+            |> Result.andThen (\_ -> validateSpentOutputs localStateUtxos spendings)
             |> Result.map
                 (\_ ->
                     let
@@ -1801,6 +1824,260 @@ validMinAdaPerOutput outputs =
 
                 Err err ->
                     Err err
+
+
+{-| Do as many checks as we can on user-provided spendings.
+-}
+validateSpentOutputs : Utxo.RefDict Output -> List SpendSource -> Result TxFinalizationError ()
+validateSpentOutputs localStateUtxos spendings =
+    List.map (checkSpentSource localStateUtxos) spendings
+        |> Result.Extra.combine
+        |> Result.map (\_ -> ())
+
+
+{-| Do as many checks as we can on user-provided spendings.
+
+We can check things like:
+
+  - check address is of correct type (key/script)
+  - check script witness has correct hash
+
+-}
+checkSpentSource : Utxo.RefDict Output -> SpendSource -> Result TxFinalizationError ()
+checkSpentSource localStateUtxos spending =
+    case spending of
+        FromWallet { address, guaranteedUtxos } ->
+            let
+                checkRefAddressIsKey ref =
+                    case Dict.Any.get ref localStateUtxos of
+                        Nothing ->
+                            Err <| ReferenceOutputsMissingFromLocalState [ ref ]
+
+                        Just output ->
+                            checkAddressIsKey output.address
+
+                checkAddressIsKey addr =
+                    case addr of
+                        Byron _ ->
+                            Err <| InvalidWalletAddress addr "Byron addresses not supported"
+
+                        Reward _ ->
+                            Err <| InvalidWalletAddress addr "Reward address cannot be spent"
+
+                        Shelley { paymentCredential } ->
+                            case paymentCredential of
+                                VKeyHash _ ->
+                                    Ok ()
+
+                                ScriptHash _ ->
+                                    Err <| InvalidWalletAddress addr "This is a script address, not a regular wallet key address"
+            in
+            checkAddressIsKey address
+                |> Result.andThen
+                    (\_ ->
+                        List.map checkRefAddressIsKey guaranteedUtxos
+                            |> Result.Extra.combine
+                            |> Result.map (\_ -> ())
+                    )
+
+        FromNativeScript { spentInput, nativeScriptWitness } ->
+            -- Check that the address is a script address
+            -- Check that the witness corresponds to the script address
+            case Dict.Any.get spentInput localStateUtxos of
+                Nothing ->
+                    Err <| ReferenceOutputsMissingFromLocalState [ spentInput ]
+
+                Just output ->
+                    case output.address of
+                        Byron _ ->
+                            Err <| InvalidWalletAddress output.address "Byron addresses not supported"
+
+                        Reward _ ->
+                            Err <| InvalidWalletAddress output.address "Reward address cannot be spent"
+
+                        Shelley { paymentCredential } ->
+                            case paymentCredential of
+                                VKeyHash _ ->
+                                    Err <| InvalidWalletAddress output.address "This is a regular wallet key address, not a script address"
+
+                                ScriptHash scriptHash ->
+                                    case nativeScriptWitness of
+                                        WitnessByValue nativeScript ->
+                                            let
+                                                computedScriptHash =
+                                                    Script.hash (Script.Native nativeScript)
+                                            in
+                                            if computedScriptHash == scriptHash then
+                                                Ok ()
+
+                                            else
+                                                Err <|
+                                                    ScriptHashMismatch
+                                                        { expected = scriptHash, witness = computedScriptHash }
+                                                        "Provided witness has wrong native script hash"
+
+                                        WitnessByReference outputRef ->
+                                            case Dict.Any.get outputRef localStateUtxos of
+                                                Nothing ->
+                                                    Err <| ReferenceOutputsMissingFromLocalState [ outputRef ]
+
+                                                Just { referenceScript } ->
+                                                    case referenceScript of
+                                                        Nothing ->
+                                                            Err <| MissingReferenceScript outputRef
+
+                                                        Just scriptRef ->
+                                                            if Script.refHash scriptRef == scriptHash then
+                                                                Ok ()
+
+                                                            else
+                                                                Err <|
+                                                                    ScriptHashMismatch
+                                                                        { expected = scriptHash, witness = Script.refHash scriptRef }
+                                                                        "Provided witness has wrong native script hash"
+
+        FromPlutusScript { spentInput, datumWitness, plutusScriptWitness } ->
+            -- Check that the address is a script address
+            -- Check that the witness corresponds to the script address
+            case Dict.Any.get spentInput localStateUtxos of
+                Nothing ->
+                    Err <| ReferenceOutputsMissingFromLocalState [ spentInput ]
+
+                Just output ->
+                    case output.address of
+                        Byron _ ->
+                            Err <| InvalidWalletAddress output.address "Byron addresses not supported"
+
+                        Reward _ ->
+                            Err <| InvalidWalletAddress output.address "Reward address cannot be spent"
+
+                        Shelley { paymentCredential } ->
+                            case paymentCredential of
+                                VKeyHash _ ->
+                                    Err <| InvalidWalletAddress output.address "This is a regular wallet key address, not a script address"
+
+                                ScriptHash scriptHash ->
+                                    -- If a datum witness is given, check it.
+                                    -- And check the plutus script witness
+                                    checkDatumWitness localStateUtxos output.datumOption datumWitness
+                                        |> Result.andThen
+                                            (\_ ->
+                                                let
+                                                    ( version, witnessSource ) =
+                                                        plutusScriptWitness.script
+                                                in
+                                                case witnessSource of
+                                                    WitnessByValue scriptBytes ->
+                                                        let
+                                                            computedScriptHash =
+                                                                Script.plutusScriptFromBytes version scriptBytes
+                                                                    |> Script.Plutus
+                                                                    |> Script.hash
+                                                        in
+                                                        if computedScriptHash == scriptHash then
+                                                            Ok ()
+
+                                                        else
+                                                            Err <|
+                                                                ScriptHashMismatch
+                                                                    { expected = scriptHash, witness = computedScriptHash }
+                                                                    "Provided witness has the wrong plutus script hash"
+
+                                                    WitnessByReference outputRef ->
+                                                        case Dict.Any.get outputRef localStateUtxos of
+                                                            Nothing ->
+                                                                Err <| ReferenceOutputsMissingFromLocalState [ outputRef ]
+
+                                                            Just { referenceScript } ->
+                                                                case referenceScript of
+                                                                    Nothing ->
+                                                                        Err <| MissingReferenceScript outputRef
+
+                                                                    Just scriptRef ->
+                                                                        if Script.refHash scriptRef == scriptHash then
+                                                                            let
+                                                                                scriptBytes =
+                                                                                    Script.refBytes scriptRef
+                                                                            in
+                                                                            case D.decode Script.fromCbor (Bytes.toBytes scriptBytes) of
+                                                                                Just _ ->
+                                                                                    Ok ()
+
+                                                                                Nothing ->
+                                                                                    Err <| InvalidScriptRef outputRef scriptBytes "UTxO contains an invalid reference script (bytes cannot be decoded into an actual script)"
+
+                                                                        else
+                                                                            Err <|
+                                                                                ScriptHashMismatch
+                                                                                    { expected = scriptHash, witness = Script.refHash scriptRef }
+                                                                                    "Provided witness has wrong plutus script hash"
+                                            )
+
+
+{-| Check that the datum witness matches the output datum option.
+-}
+checkDatumWitness : Utxo.RefDict Output -> Maybe DatumOption -> Maybe (WitnessSource Data) -> Result TxFinalizationError ()
+checkDatumWitness localStateUtxos maybeDatumOption maybeDatumWitness =
+    case ( maybeDatumOption, maybeDatumWitness ) of
+        ( Nothing, Nothing ) ->
+            Ok ()
+
+        ( Nothing, Just datumWitness ) ->
+            Err <| ExtraneousDatumWitness datumWitness "Datum witness was provided but the corresponding UTxO has no datum"
+
+        ( Just (DatumValue _), Nothing ) ->
+            Ok ()
+
+        ( Just (DatumValue _), Just datumWitness ) ->
+            Err <| ExtraneousDatumWitness datumWitness "Datum witness was provided but the corresponding UTxO already has a datum provided by value"
+
+        ( Just (DatumHash datumHash), Nothing ) ->
+            Err <| MissingDatumWitness datumHash "Datum in UTxO is a hash, but no witness was provided"
+
+        ( Just (DatumHash datumHash), Just witness ) ->
+            case witness of
+                WitnessByValue data ->
+                    let
+                        dataHash =
+                            Data.hash data
+                    in
+                    if dataHash == datumHash then
+                        Ok ()
+
+                    else
+                        Err <|
+                            DatumHashMismatch
+                                { expected = datumHash, witness = dataHash }
+                                "Provided witness has wrong datum hash"
+
+                WitnessByReference utxoRef ->
+                    case Dict.Any.get utxoRef localStateUtxos of
+                        Nothing ->
+                            Err <| ReferenceOutputsMissingFromLocalState [ utxoRef ]
+
+                        Just output ->
+                            case output.datumOption of
+                                Nothing ->
+                                    Err <| MissingDatumWitness datumHash "The referenced UTxO presented as witness does not contain a datum"
+
+                                Just (DatumHash _) ->
+                                    Err <| MissingDatumWitness datumHash "The referenced UTxO presented as witness contains a datum hash again instead of a datum value"
+
+                                Just (DatumValue datumValueWitness) ->
+                                    let
+                                        dataHash =
+                                            -- TODO: Actually this re-encodes the datum, potentially with wrong cbor encoding.
+                                            -- What we should do is having a way to keep the raw binary of datums when decoding outputs.
+                                            Data.hash datumValueWitness
+                                    in
+                                    if dataHash == datumHash then
+                                        Ok ()
+
+                                    else
+                                        Err <|
+                                            DatumHashMismatch
+                                                { expected = datumHash, witness = dataHash }
+                                                "Provided witness has wrong datum hash"
 
 
 type alias ProcessedOtherInfo =
