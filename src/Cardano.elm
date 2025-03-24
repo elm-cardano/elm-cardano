@@ -1921,7 +1921,7 @@ checkDatumWitness localStateUtxos maybeDatumOption maybeDatumWitness =
                         Ok ()
 
                     else
-                        Err <| DatumHashMismatch hashes "Provided witness has wrong datum hash"
+                        Err <| DatumHashMismatch hashes "Provided witness has wrong datum hash. Maybe you provided the wrong witness Data, or it is encoded differently than the original one."
             in
             case witness of
                 WitnessByValue data ->
