@@ -7,7 +7,7 @@ import Cardano.Address as Address exposing (Address, Credential(..), CredentialH
 import Cardano.Data as Data
 import Cardano.Script as Script exposing (PlutusVersion(..))
 import Cardano.Transaction as Transaction exposing (Certificate(..), newBody, newWitnessSet)
-import Cardano.Utxo as Utxo exposing (DatumOption(..), Output, OutputReference)
+import Cardano.Utxo as Utxo exposing (Output, OutputReference)
 import Cardano.Value as Value
 import Dict exposing (Dict)
 import Dict.Any
@@ -225,7 +225,7 @@ suite =
                     makeLockedOutput adaAmount =
                         { address = lockScriptAddress
                         , amount = adaAmount
-                        , datumOption = Just (DatumValue (Data.Bytes <| Bytes.toAny myKeyCred))
+                        , datumOption = Just (Utxo.datumValueFromData <| Data.Bytes <| Bytes.toAny myKeyCred)
                         , referenceScript = Nothing
                         }
 
@@ -241,7 +241,7 @@ suite =
                                 { spentInput = utxoBeingSpent
                                 , datumWitness = Nothing
                                 , plutusScriptWitness =
-                                    { script = ( Script.plutusVersion lock.script, WitnessValue <| Script.cborWrappedBytes lock.script )
+                                    { script = ( Script.plutusVersion lock.script, WitnessByValue <| Script.cborWrappedBytes lock.script )
                                     , redeemerData = redeemer
                                     , requiredSigners = [ myKeyCred ]
                                     }

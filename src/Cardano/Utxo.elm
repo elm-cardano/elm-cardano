@@ -7,7 +7,7 @@ module Cardano.Utxo exposing
     , minAda, checkMinAda, minAdaForAssets, freeAda, bytesWidth
     , encodeOutputReference, encodeOutput, encodeDatumOption
     , decodeOutputReference, decodeOutput
-    , outputReferenceToData
+    , outputReferenceToData, datumValueFromData
     )
 
 {-| Handling outputs.
@@ -49,7 +49,7 @@ module Cardano.Utxo exposing
 
 @docs decodeOutputReference, decodeOutput
 
-@docs outputReferenceToData
+@docs outputReferenceToData, datumValueFromData
 
 -}
 
@@ -301,7 +301,14 @@ encodeOutput output =
 -}
 type DatumOption
     = DatumHash (Bytes DatumHash)
-    | DatumValue Data
+    | DatumValue { rawBytes : Bytes Data }
+
+
+{-| Create a DatumOption with a value from a Data object.
+-}
+datumValueFromData : Data -> DatumOption
+datumValueFromData datum =
+    DatumValue { rawBytes = Data.toCborUplc datum |> E.encode |> Bytes.fromBytes }
 
 
 {-| CBOR encoder for [DatumOption].
@@ -317,10 +324,12 @@ encodeDatumOption datumOption =
 
             DatumValue datum ->
                 [ E.int 1
-                , datum
-                    |> Data.toCborUplc
-                    |> E.encode
-                    |> E.tagged Tag.Cbor E.bytes
+
+                -- , datum
+                --     |> Data.toCborUplc
+                --     |> E.encode
+                --     |> E.tagged Tag.Cbor E.bytes
+                , E.tagged Tag.Cbor E.bytes <| Bytes.toBytes datum.rawBytes
                 ]
 
 
@@ -391,7 +400,7 @@ datumOptionFromCbor =
                         D.map (DatumHash << Bytes.fromBytes) D.bytes
 
                     1 ->
-                        D.map DatumValue decodeOutputDatum
+                        D.map (\rawBytes -> DatumValue { rawBytes = rawBytes }) decodeOutputDatum
 
                     _ ->
                         D.failWith ("Unknown datum option tag: " ++ String.fromInt tag)
@@ -403,14 +412,14 @@ datumOptionFromCbor =
     data = #6.24(bytes .cbor plutus_data)
 
 -}
-decodeOutputDatum : D.Decoder Data
+decodeOutputDatum : D.Decoder (Bytes Data)
 decodeOutputDatum =
     D.tagged Tag.Cbor D.bytes
         |> D.andThen
             (\( _, datumCbor ) ->
                 case D.decode Data.fromCbor datumCbor of
-                    Just data ->
-                        D.succeed data
+                    Just _ ->
+                        D.succeed (Bytes.fromBytes datumCbor)
 
                     Nothing ->
                         D.fail

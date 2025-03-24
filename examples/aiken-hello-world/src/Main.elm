@@ -265,7 +265,7 @@ update msg model =
                             { spentInput = OutputReference txId 0
                             , datumWitness = Nothing
                             , plutusScriptWitness =
-                                { script = ( PlutusV3, WitnessValue ctx.lockScript.compiledCode )
+                                { script = ( PlutusV3, WitnessByValue ctx.lockScript.compiledCode )
                                 , redeemerData = \_ -> redeemer
                                 , requiredSigners = [ ctx.myKeyCred ]
                                 }
@@ -308,7 +308,7 @@ lock ({ localStateUtxos, myKeyCred, scriptAddress, loadedWallet, lockScript } as
             , SendToOutput
                 { address = scriptAddress
                 , amount = twoAda
-                , datumOption = Just (DatumValue datum)
+                , datumOption = Just (Utxo.datumValueFromData datum)
                 , referenceScript = Nothing
                 }
             ]

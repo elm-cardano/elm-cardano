@@ -461,7 +461,7 @@ update msg model =
                             { drep =
                                 WithScript ctx.govNativeScript.hash <|
                                     NativeWitness
-                                        { script = WitnessValue ctx.govNativeScript.script
+                                        { script = WitnessByValue ctx.govNativeScript.script
                                         , expectedSigners = [ ctx.myStakeKeyHash ]
                                         }
                             , deposit = ctx.protocolParams.drepDeposit
@@ -532,7 +532,7 @@ update msg model =
                         (WithDrepCred <|
                             WithScript ctx.govNativeScript.hash <|
                                 NativeWitness
-                                    { script = WitnessValue ctx.govNativeScript.script
+                                    { script = WitnessByValue ctx.govNativeScript.script
                                     , expectedSigners = [ ctx.myStakeKeyHash ]
                                     }
                         )
@@ -586,7 +586,7 @@ update msg model =
                             { drep =
                                 WithScript ctx.govNativeScript.hash <|
                                     NativeWitness
-                                        { script = WitnessValue ctx.govNativeScript.script
+                                        { script = WitnessByValue ctx.govNativeScript.script
                                         , expectedSigners = [ ctx.myStakeKeyHash ]
                                         }
                             , refund = refund

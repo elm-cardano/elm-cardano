@@ -281,7 +281,7 @@ okTxBuilding =
                 [ MintBurn
                     { policyId = dog.policyId
                     , assets = Map.singleton dog.assetName Integer.one
-                    , scriptWitness = NativeWitness { script = WitnessReference dog.scriptRef, expectedSigners = [] }
+                    , scriptWitness = NativeWitness { script = WitnessByReference dog.scriptRef, expectedSigners = [] }
                     }
                 , SendTo testAddr.me (Value.onlyToken dog.policyId dog.assetName Natural.one)
 
@@ -295,7 +295,7 @@ okTxBuilding =
                 , MintBurn
                     { policyId = cat.policyId
                     , assets = Map.singleton cat.assetName Integer.negativeOne
-                    , scriptWitness = NativeWitness { script = WitnessReference cat.scriptRef, expectedSigners = [] }
+                    , scriptWitness = NativeWitness { script = WitnessByReference cat.scriptRef, expectedSigners = [] }
                     }
                 ]
             }
@@ -378,7 +378,7 @@ okTxBuilding =
             makeLockedOutput adaAmount =
                 { address = lockScriptAddress
                 , amount = adaAmount
-                , datumOption = Just (DatumValue (Data.Bytes <| Bytes.toAny myKeyCred))
+                , datumOption = Just (Utxo.datumValueFromData <| Data.Bytes <| Bytes.toAny myKeyCred)
                 , referenceScript = Nothing
                 }
 
@@ -401,7 +401,7 @@ okTxBuilding =
                         { spentInput = utxoBeingSpent
                         , datumWitness = Nothing
                         , plutusScriptWitness =
-                            { script = ( PlutusV3, WitnessValue lock.scriptBytes )
+                            { script = ( PlutusV3, WitnessByValue lock.scriptBytes )
                             , redeemerData = redeemer
                             , requiredSigners = [ myKeyCred ]
                             }
@@ -532,7 +532,7 @@ okTxBuilding =
                     Just
                         { policyId = Bytes.fromHexUnchecked "fa24fb305126805cf2164c161d852a0e7330cf988f1fe558cf7d4a64"
                         , plutusVersion = PlutusV3
-                        , scriptWitness = WitnessValue guardrailsScriptBytes
+                        , scriptWitness = WitnessByValue guardrailsScriptBytes
                         }
                 , lastEnactedCommitteeAction = Nothing
                 , lastEnactedConstitutionAction = Nothing
@@ -682,7 +682,7 @@ okTxBuilding =
                 WithPoolCred (dummyCredentialHash "poolId")
 
             withMyDrepScript =
-                WithDrepCred (WithScript drepScriptHash <| NativeWitness { script = WitnessValue drepScript, expectedSigners = [] })
+                WithDrepCred (WithScript drepScriptHash <| NativeWitness { script = WitnessByValue drepScript, expectedSigners = [] })
           in
           okTxTest "Test with multiple votes"
             { govState = Cardano.emptyGovernanceState
@@ -1003,7 +1003,7 @@ failTxBuilding =
             makeLockedOutput adaAmount =
                 { address = lockScriptAddress
                 , amount = adaAmount
-                , datumOption = Just (DatumValue (Data.Bytes <| Bytes.toAny myKeyCred))
+                , datumOption = Just (Utxo.datumValueFromData <| Data.Bytes <| Bytes.toAny myKeyCred)
                 , referenceScript = Nothing
                 }
 
@@ -1014,7 +1014,7 @@ failTxBuilding =
                 , ( utxoBeingSpent, makeLockedOutput <| Value.onlyLovelace <| ada 4 )
                 ]
           in
-          failTxTest "collateral insufficient in: spend 2 ada from a plutus script holding 4 ada"
+          failTxTest "when collateral is insufficient in: spend 2 ada from a plutus script holding 4 ada"
             { govState = Cardano.emptyGovernanceState
             , localStateUtxos = localStateUtxos
             , evalScriptsCosts = Uplc.evalScriptsCosts Uplc.defaultVmConfig
@@ -1027,7 +1027,7 @@ failTxBuilding =
                         { spentInput = utxoBeingSpent
                         , datumWitness = Nothing
                         , plutusScriptWitness =
-                            { script = ( PlutusV3, WitnessValue lock.scriptBytes )
+                            { script = ( PlutusV3, WitnessByValue lock.scriptBytes )
                             , redeemerData = redeemer
                             , requiredSigners = [ myKeyCred ]
                             }
@@ -1041,6 +1041,575 @@ failTxBuilding =
             (\error ->
                 case error of
                     CollateralSelectionError (CoinSelection.UTxOBalanceInsufficient _) ->
+                        Expect.pass
+
+                    _ ->
+                        Expect.fail ("I didn’t expect this failure: " ++ Debug.toString error)
+            )
+
+        -- Test failing when providing the wrong native script in witness
+        , let
+            correctScript =
+                ScriptAny []
+
+            wrongScript =
+                ScriptAll []
+
+            utxoBeingSpent =
+                makeRef "previouslySentToLock" 0
+
+            localStateUtxos =
+                [ makeAdaOutput 0 testAddr.me 5
+                , ( utxoBeingSpent
+                  , { address = Address.script Mainnet (Script.hash <| Script.Native correctScript)
+                    , amount = Value.onlyLovelace (ada 4)
+                    , datumOption = Nothing
+                    , referenceScript = Nothing
+                    }
+                  )
+                ]
+          in
+          failTxTest "when providing the wrong native script witness"
+            { govState = Cardano.emptyGovernanceState
+            , localStateUtxos = localStateUtxos
+            , evalScriptsCosts = \_ _ -> Ok []
+            , fee = twoAdaFee
+            , txOtherInfo = []
+            , txIntents =
+                [ Spend <|
+                    FromNativeScript
+                        { spentInput = utxoBeingSpent
+                        , nativeScriptWitness = WitnessByValue wrongScript
+                        }
+                , SendTo testAddr.me (Value.onlyLovelace <| ada 4)
+                ]
+            }
+            (\error ->
+                case error of
+                    ScriptHashMismatch _ _ ->
+                        Expect.pass
+
+                    _ ->
+                        Expect.fail ("I didn’t expect this failure: " ++ Debug.toString error)
+            )
+
+        -- Test failing when providing the wrong native script in witness by reference
+        , let
+            correctScript =
+                ScriptAny []
+
+            wrongScript =
+                ScriptAll []
+
+            utxoBeingSpent =
+                makeRef "previouslySentToLock" 0
+
+            utxoWithScriptRef =
+                makeRef "scriptRef" 0
+
+            localStateUtxos =
+                [ makeAdaOutput 0 testAddr.me 5
+                , ( utxoBeingSpent
+                  , { address = Address.script Mainnet (Script.hash <| Script.Native correctScript)
+                    , amount = Value.onlyLovelace (ada 4)
+                    , datumOption = Nothing
+                    , referenceScript = Nothing
+                    }
+                  )
+                , ( utxoWithScriptRef
+                  , { address = testAddr.me
+                    , amount = Value.onlyLovelace (ada 2)
+                    , datumOption = Nothing
+                    , referenceScript = Just <| Script.refFromScript <| Script.Native wrongScript
+                    }
+                  )
+                ]
+          in
+          failTxTest "when providing the wrong native script witness by reference"
+            { govState = Cardano.emptyGovernanceState
+            , localStateUtxos = localStateUtxos
+            , evalScriptsCosts = \_ _ -> Ok []
+            , fee = twoAdaFee
+            , txOtherInfo = []
+            , txIntents =
+                [ Spend <|
+                    FromNativeScript
+                        { spentInput = utxoBeingSpent
+                        , nativeScriptWitness = WitnessByReference utxoWithScriptRef
+                        }
+                , SendTo testAddr.me (Value.onlyLovelace <| ada 4)
+                ]
+            }
+            (\error ->
+                case error of
+                    ScriptHashMismatch _ _ ->
+                        Expect.pass
+
+                    _ ->
+                        Expect.fail ("I didn’t expect this failure: " ++ Debug.toString error)
+            )
+
+        -- Test failing when providing a witness by reference with no reference script
+        , let
+            utxoBeingSpent =
+                makeRef "previouslySentToLock" 0
+
+            utxoWithoutScriptRef =
+                makeRef "scriptRef" 0
+
+            localStateUtxos =
+                [ makeAdaOutput 0 testAddr.me 5
+                , ( utxoBeingSpent
+                  , { address = Address.script Mainnet (Script.hash <| Script.Native <| ScriptAny [])
+                    , amount = Value.onlyLovelace (ada 4)
+                    , datumOption = Nothing
+                    , referenceScript = Nothing
+                    }
+                  )
+                , ( utxoWithoutScriptRef
+                  , { address = testAddr.me
+                    , amount = Value.onlyLovelace (ada 2)
+                    , datumOption = Nothing
+                    , referenceScript = Nothing
+                    }
+                  )
+                ]
+          in
+          failTxTest "when providing a witness by reference with no reference script"
+            { govState = Cardano.emptyGovernanceState
+            , localStateUtxos = localStateUtxos
+            , evalScriptsCosts = \_ _ -> Ok []
+            , fee = twoAdaFee
+            , txOtherInfo = []
+            , txIntents =
+                [ Spend <|
+                    FromNativeScript
+                        { spentInput = utxoBeingSpent
+                        , nativeScriptWitness = WitnessByReference utxoWithoutScriptRef
+                        }
+                , SendTo testAddr.me (Value.onlyLovelace <| ada 4)
+                ]
+            }
+            (\error ->
+                case error of
+                    MissingReferenceScript _ ->
+                        Expect.pass
+
+                    _ ->
+                        Expect.fail ("I didn’t expect this failure: " ++ Debug.toString error)
+            )
+
+        -- Test that provided plutus script witness value has the expected hash
+        , let
+            correctScript =
+                Script.plutusScriptFromBytes PlutusV3 <| Bytes.fromHexUnchecked ""
+
+            wrongScript =
+                ( PlutusV2, WitnessByValue <| Bytes.fromHexUnchecked "" )
+
+            utxoBeingSpent =
+                makeRef "previouslySentToLock" 0
+
+            localStateUtxos =
+                [ makeAdaOutput 0 testAddr.me 5
+                , ( utxoBeingSpent
+                  , { address = Address.script Mainnet (Script.hash <| Script.Plutus correctScript)
+                    , amount = Value.onlyLovelace <| ada 4
+                    , datumOption = Nothing
+                    , referenceScript = Nothing
+                    }
+                  )
+                ]
+          in
+          failTxTest "when providing the wrong plutus script witness"
+            { govState = Cardano.emptyGovernanceState
+            , localStateUtxos = localStateUtxos
+            , evalScriptsCosts = \_ _ -> Ok []
+            , fee = twoAdaFee
+            , txOtherInfo = []
+            , txIntents =
+                [ Spend <|
+                    FromPlutusScript
+                        { spentInput = utxoBeingSpent
+                        , datumWitness = Nothing
+                        , plutusScriptWitness =
+                            { script = wrongScript
+                            , redeemerData = \_ -> Data.List []
+                            , requiredSigners = []
+                            }
+                        }
+                , SendTo testAddr.me (Value.onlyLovelace <| ada 4)
+                ]
+            }
+            (\error ->
+                case error of
+                    ScriptHashMismatch _ _ ->
+                        Expect.pass
+
+                    _ ->
+                        Expect.fail ("I didn’t expect this failure: " ++ Debug.toString error)
+            )
+
+        -- Test that there is no extraneous datum witness
+        , let
+            script =
+                Script.plutusScriptFromBytes PlutusV3 <| Bytes.fromHexUnchecked ""
+
+            scriptWitness =
+                ( PlutusV3, WitnessByValue <| Bytes.fromHexUnchecked "" )
+
+            extraneousDatumWitness =
+                WitnessByValue <| Data.List []
+
+            utxoBeingSpent =
+                makeRef "previouslySentToLock" 0
+
+            localStateUtxos =
+                [ makeAdaOutput 0 testAddr.me 5
+                , ( utxoBeingSpent
+                  , { address = Address.script Mainnet (Script.hash <| Script.Plutus script)
+                    , amount = Value.onlyLovelace <| ada 4
+
+                    -- No datum at the script utxo
+                    , datumOption = Nothing
+                    , referenceScript = Nothing
+                    }
+                  )
+                ]
+          in
+          failTxTest "when there is an extraneous datum witness (no datum at script utxo)"
+            { govState = Cardano.emptyGovernanceState
+            , localStateUtxos = localStateUtxos
+            , evalScriptsCosts = \_ _ -> Ok []
+            , fee = twoAdaFee
+            , txOtherInfo = []
+            , txIntents =
+                [ Spend <|
+                    FromPlutusScript
+                        { spentInput = utxoBeingSpent
+
+                        -- Extraneous datum witness here
+                        , datumWitness = Just extraneousDatumWitness
+                        , plutusScriptWitness =
+                            { script = scriptWitness
+                            , redeemerData = \_ -> Data.List []
+                            , requiredSigners = []
+                            }
+                        }
+                , SendTo testAddr.me (Value.onlyLovelace <| ada 4)
+                ]
+            }
+            (\error ->
+                case error of
+                    ExtraneousDatumWitness _ _ ->
+                        Expect.pass
+
+                    _ ->
+                        Expect.fail ("I didn’t expect this failure: " ++ Debug.toString error)
+            )
+
+        -- Test that there is no extraneous datum witness (already by value in script utxo)
+        , let
+            script =
+                Script.plutusScriptFromBytes PlutusV3 <| Bytes.fromHexUnchecked ""
+
+            scriptWitness =
+                ( PlutusV3, WitnessByValue <| Bytes.fromHexUnchecked "" )
+
+            extraneousDatumWitness =
+                WitnessByValue <| Data.List []
+
+            utxoBeingSpent =
+                makeRef "previouslySentToLock" 0
+
+            localStateUtxos =
+                [ makeAdaOutput 0 testAddr.me 5
+                , ( utxoBeingSpent
+                  , { address = Address.script Mainnet (Script.hash <| Script.Plutus script)
+                    , amount = Value.onlyLovelace <| ada 4
+
+                    -- Datum already provided by value
+                    , datumOption = Just <| Utxo.datumValueFromData <| Data.List []
+                    , referenceScript = Nothing
+                    }
+                  )
+                ]
+          in
+          failTxTest "when there is an extraneous datum witness (datum value already at script utxo)"
+            { govState = Cardano.emptyGovernanceState
+            , localStateUtxos = localStateUtxos
+            , evalScriptsCosts = \_ _ -> Ok []
+            , fee = twoAdaFee
+            , txOtherInfo = []
+            , txIntents =
+                [ Spend <|
+                    FromPlutusScript
+                        { spentInput = utxoBeingSpent
+
+                        -- Extraneous datum witness here
+                        , datumWitness = Just extraneousDatumWitness
+                        , plutusScriptWitness =
+                            { script = scriptWitness
+                            , redeemerData = \_ -> Data.List []
+                            , requiredSigners = []
+                            }
+                        }
+                , SendTo testAddr.me (Value.onlyLovelace <| ada 4)
+                ]
+            }
+            (\error ->
+                case error of
+                    ExtraneousDatumWitness _ _ ->
+                        Expect.pass
+
+                    _ ->
+                        Expect.fail ("I didn’t expect this failure: " ++ Debug.toString error)
+            )
+
+        -- Test that the datum witness is not missing
+        , let
+            script =
+                Script.plutusScriptFromBytes PlutusV3 <| Bytes.fromHexUnchecked ""
+
+            scriptWitness =
+                ( PlutusV3, WitnessByValue <| Bytes.fromHexUnchecked "" )
+
+            utxoBeingSpent =
+                makeRef "previouslySentToLock" 0
+
+            datum =
+                Data.List []
+
+            localStateUtxos =
+                [ makeAdaOutput 0 testAddr.me 5
+                , ( utxoBeingSpent
+                  , { address = Address.script Mainnet (Script.hash <| Script.Plutus script)
+                    , amount = Value.onlyLovelace <| ada 4
+
+                    -- Datum provided by hash
+                    , datumOption = Just <| DatumHash <| Data.hash datum
+                    , referenceScript = Nothing
+                    }
+                  )
+                ]
+          in
+          failTxTest "when the datum witness is missing"
+            { govState = Cardano.emptyGovernanceState
+            , localStateUtxos = localStateUtxos
+            , evalScriptsCosts = \_ _ -> Ok []
+            , fee = twoAdaFee
+            , txOtherInfo = []
+            , txIntents =
+                [ Spend <|
+                    FromPlutusScript
+                        { spentInput = utxoBeingSpent
+                        , datumWitness = Nothing
+                        , plutusScriptWitness =
+                            { script = scriptWitness
+                            , redeemerData = \_ -> Data.List []
+                            , requiredSigners = []
+                            }
+                        }
+                , SendTo testAddr.me (Value.onlyLovelace <| ada 4)
+                ]
+            }
+            (\error ->
+                case error of
+                    MissingDatumWitness _ _ ->
+                        Expect.pass
+
+                    _ ->
+                        Expect.fail ("I didn’t expect this failure: " ++ Debug.toString error)
+            )
+
+        -- Test that the datum witness is not missing (by ref)
+        , let
+            script =
+                Script.plutusScriptFromBytes PlutusV3 <| Bytes.fromHexUnchecked ""
+
+            scriptWitness =
+                ( PlutusV3, WitnessByValue <| Bytes.fromHexUnchecked "" )
+
+            utxoBeingSpent =
+                makeRef "previouslySentToLock" 0
+
+            utxoRefWithoutDatum =
+                makeRef "datumRef" 0
+
+            datum =
+                Data.List []
+
+            localStateUtxos =
+                [ makeAdaOutput 0 testAddr.me 5
+                , ( utxoBeingSpent
+                  , { address = Address.script Mainnet (Script.hash <| Script.Plutus script)
+                    , amount = Value.onlyLovelace <| ada 4
+
+                    -- Datum provided by hash
+                    , datumOption = Just <| DatumHash <| Data.hash datum
+                    , referenceScript = Nothing
+                    }
+                  )
+                , ( utxoRefWithoutDatum
+                  , { address = Address.script Mainnet (Script.hash <| Script.Plutus script)
+                    , amount = Value.onlyLovelace <| ada 4
+                    , datumOption = Nothing
+                    , referenceScript = Nothing
+                    }
+                  )
+                ]
+          in
+          failTxTest "when the datum witness is missing (by ref)"
+            { govState = Cardano.emptyGovernanceState
+            , localStateUtxos = localStateUtxos
+            , evalScriptsCosts = \_ _ -> Ok []
+            , fee = twoAdaFee
+            , txOtherInfo = []
+            , txIntents =
+                [ Spend <|
+                    FromPlutusScript
+                        { spentInput = utxoBeingSpent
+                        , datumWitness = Just <| WitnessByReference utxoRefWithoutDatum
+                        , plutusScriptWitness =
+                            { script = scriptWitness
+                            , redeemerData = \_ -> Data.List []
+                            , requiredSigners = []
+                            }
+                        }
+                , SendTo testAddr.me (Value.onlyLovelace <| ada 4)
+                ]
+            }
+            (\error ->
+                case error of
+                    MissingDatumWitness _ _ ->
+                        Expect.pass
+
+                    _ ->
+                        Expect.fail ("I didn’t expect this failure: " ++ Debug.toString error)
+            )
+
+        -- Test that the datum witness is matching (by value)
+        , let
+            script =
+                Script.plutusScriptFromBytes PlutusV3 <| Bytes.fromHexUnchecked ""
+
+            scriptWitness =
+                ( PlutusV3, WitnessByValue <| Bytes.fromHexUnchecked "" )
+
+            utxoBeingSpent =
+                makeRef "previouslySentToLock" 0
+
+            correctDatum =
+                Data.List []
+
+            wrongDatum =
+                Data.List [ Data.List [] ]
+
+            localStateUtxos =
+                [ makeAdaOutput 0 testAddr.me 5
+                , ( utxoBeingSpent
+                  , { address = Address.script Mainnet (Script.hash <| Script.Plutus script)
+                    , amount = Value.onlyLovelace <| ada 4
+
+                    -- Datum provided by hash
+                    , datumOption = Just <| DatumHash <| Data.hash correctDatum
+                    , referenceScript = Nothing
+                    }
+                  )
+                ]
+          in
+          failTxTest "when the datum witness is not matching (by value)"
+            { govState = Cardano.emptyGovernanceState
+            , localStateUtxos = localStateUtxos
+            , evalScriptsCosts = \_ _ -> Ok []
+            , fee = twoAdaFee
+            , txOtherInfo = []
+            , txIntents =
+                [ Spend <|
+                    FromPlutusScript
+                        { spentInput = utxoBeingSpent
+                        , datumWitness = Just <| WitnessByValue wrongDatum
+                        , plutusScriptWitness =
+                            { script = scriptWitness
+                            , redeemerData = \_ -> Data.List []
+                            , requiredSigners = []
+                            }
+                        }
+                , SendTo testAddr.me (Value.onlyLovelace <| ada 4)
+                ]
+            }
+            (\error ->
+                case error of
+                    DatumHashMismatch _ _ ->
+                        Expect.pass
+
+                    _ ->
+                        Expect.fail ("I didn’t expect this failure: " ++ Debug.toString error)
+            )
+
+        -- Test that the datum witness is matching (by ref)
+        , let
+            script =
+                Script.plutusScriptFromBytes PlutusV3 <| Bytes.fromHexUnchecked ""
+
+            scriptWitness =
+                ( PlutusV3, WitnessByValue <| Bytes.fromHexUnchecked "" )
+
+            utxoBeingSpent =
+                makeRef "previouslySentToLock" 0
+
+            utxoRef =
+                makeRef "datumRef" 0
+
+            correctDatum =
+                Data.List []
+
+            wrongDatum =
+                Data.List [ Data.List [] ]
+
+            localStateUtxos =
+                [ makeAdaOutput 0 testAddr.me 5
+                , ( utxoBeingSpent
+                  , { address = Address.script Mainnet (Script.hash <| Script.Plutus script)
+                    , amount = Value.onlyLovelace <| ada 4
+
+                    -- Datum provided by hash
+                    , datumOption = Just <| DatumHash <| Data.hash correctDatum
+                    , referenceScript = Nothing
+                    }
+                  )
+                , ( utxoRef
+                  , { address = Address.script Mainnet (Script.hash <| Script.Plutus script)
+                    , amount = Value.onlyLovelace <| ada 4
+                    , datumOption = Just <| Utxo.datumValueFromData wrongDatum
+                    , referenceScript = Nothing
+                    }
+                  )
+                ]
+          in
+          failTxTest "when the datum witness is not matching (by ref)"
+            { govState = Cardano.emptyGovernanceState
+            , localStateUtxos = localStateUtxos
+            , evalScriptsCosts = \_ _ -> Ok []
+            , fee = twoAdaFee
+            , txOtherInfo = []
+            , txIntents =
+                [ Spend <|
+                    FromPlutusScript
+                        { spentInput = utxoBeingSpent
+                        , datumWitness = Just <| WitnessByReference utxoRef
+                        , plutusScriptWitness =
+                            { script = scriptWitness
+                            , redeemerData = \_ -> Data.List []
+                            , requiredSigners = []
+                            }
+                        }
+                , SendTo testAddr.me (Value.onlyLovelace <| ada 4)
+                ]
+            }
+            (\error ->
+                case error of
+                    DatumHashMismatch _ _ ->
                         Expect.pass
 
                     _ ->

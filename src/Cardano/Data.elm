@@ -1,8 +1,8 @@
-module Cardano.Data exposing (Data(..), fromCbor, toCbor, toCborUplc)
+module Cardano.Data exposing (Data(..), hash, rawDatumHash, fromBytes, fromCbor, toCbor, toCborUplc)
 
 {-| Handling Cardano Data objects.
 
-@docs Data, fromCbor, toCbor, toCborUplc
+@docs Data, hash, rawDatumHash, fromBytes, fromCbor, toCbor, toCborUplc
 
 -}
 
@@ -25,6 +25,30 @@ type Data
     | List (List Data)
     | Int Integer
     | Bytes (Bytes Any)
+
+
+{-| Compute the Blake2b-256 (32 bytes) hash of a Data object.
+-}
+hash : Data -> Bytes a
+hash data =
+    E.encode (toCbor data)
+        |> Bytes.fromBytes
+        |> Bytes.blake2b256
+
+
+{-| Helper function to compute the Blake2b-256 hash of the raw Data bytes in a UTxO datum.
+-}
+rawDatumHash : Bytes Data -> Bytes a
+rawDatumHash rawData =
+    Bytes.blake2b256 rawData
+
+
+{-| Helper function to decode a Data object from its raw CBOR bytes.
+-}
+fromBytes : Bytes a -> Maybe Data
+fromBytes bytes =
+    Bytes.toBytes bytes
+        |> D.decode fromCbor
 
 
 {-| CBOR encoder for [Data].
