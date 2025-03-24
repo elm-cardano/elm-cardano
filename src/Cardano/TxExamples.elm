@@ -25,7 +25,7 @@ import Cardano.Script as Script exposing (NativeScript(..), PlutusVersion(..))
 import Cardano.Transaction as Transaction exposing (Certificate(..), Transaction)
 import Cardano.Uplc as Uplc
 import Cardano.Utils exposing (RationalNumber)
-import Cardano.Utxo as Utxo exposing (DatumOption(..), Output, OutputReference)
+import Cardano.Utxo as Utxo exposing (Output, OutputReference)
 import Cardano.Value as Value exposing (Value)
 import Cbor.Encode as E
 import Dict.Any
@@ -191,7 +191,7 @@ example3 _ =
         makeLockedOutput adaAmount =
             { address = lockScriptAddress
             , amount = adaAmount
-            , datumOption = Just (DatumValue (Data.Bytes <| Bytes.toAny myKeyCred))
+            , datumOption = Just (Utxo.datumValueFromData <| Data.Bytes <| Bytes.toAny myKeyCred)
             , referenceScript = Nothing
             }
 
@@ -821,8 +821,8 @@ prettyDatum datumOption =
         Utxo.DatumHash h ->
             "datumHash: " ++ Bytes.pretty h
 
-        Utxo.DatumValue data ->
-            "datum: " ++ prettyCbor Data.toCbor data
+        Utxo.DatumValue { rawBytes } ->
+            "datum: " ++ Bytes.toHex rawBytes
 
 
 prettyCbor toCbor x =

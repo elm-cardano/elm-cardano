@@ -378,7 +378,7 @@ okTxBuilding =
             makeLockedOutput adaAmount =
                 { address = lockScriptAddress
                 , amount = adaAmount
-                , datumOption = Just (DatumValue (Data.Bytes <| Bytes.toAny myKeyCred))
+                , datumOption = Just (Utxo.datumValueFromData <| Data.Bytes <| Bytes.toAny myKeyCred)
                 , referenceScript = Nothing
                 }
 
@@ -1003,7 +1003,7 @@ failTxBuilding =
             makeLockedOutput adaAmount =
                 { address = lockScriptAddress
                 , amount = adaAmount
-                , datumOption = Just (DatumValue (Data.Bytes <| Bytes.toAny myKeyCred))
+                , datumOption = Just (Utxo.datumValueFromData <| Data.Bytes <| Bytes.toAny myKeyCred)
                 , referenceScript = Nothing
                 }
 
@@ -1329,7 +1329,7 @@ failTxBuilding =
                     , amount = Value.onlyLovelace <| ada 4
 
                     -- Datum already provided by value
-                    , datumOption = Just <| DatumValue <| Data.List []
+                    , datumOption = Just <| Utxo.datumValueFromData <| Data.List []
                     , referenceScript = Nothing
                     }
                   )
@@ -1581,7 +1581,7 @@ failTxBuilding =
                 , ( utxoRef
                   , { address = Address.script Mainnet (Script.hash <| Script.Plutus script)
                     , amount = Value.onlyLovelace <| ada 4
-                    , datumOption = Just <| DatumValue wrongDatum
+                    , datumOption = Just <| Utxo.datumValueFromData wrongDatum
                     , referenceScript = Nothing
                     }
                   )

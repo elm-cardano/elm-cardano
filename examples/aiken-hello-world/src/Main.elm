@@ -308,7 +308,7 @@ lock ({ localStateUtxos, myKeyCred, scriptAddress, loadedWallet, lockScript } as
             , SendToOutput
                 { address = scriptAddress
                 , amount = twoAda
-                , datumOption = Just (DatumValue datum)
+                , datumOption = Just (Utxo.datumValueFromData datum)
                 , referenceScript = Nothing
                 }
             ]
