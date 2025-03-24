@@ -1921,7 +1921,7 @@ checkDatumWitness localStateUtxos maybeDatumOption maybeDatumWitness =
                         Ok ()
 
                     else
-                        Err <| DatumHashMismatch hashes "Provided witness has wrong datum hash"
+                        Err <| DatumHashMismatch hashes "Provided witness has wrong datum hash. Maybe you provided the wrong witness Data, or it is encoded differently than the original one."
             in
             case witness of
                 WitnessByValue data ->
@@ -1937,14 +1937,8 @@ checkDatumWitness localStateUtxos maybeDatumOption maybeDatumWitness =
                                 Just (DatumHash _) ->
                                     Err <| MissingDatumWitness datumHash "The referenced UTxO presented as witness contains a datum hash again instead of a datum value"
 
-                                Just (DatumValue datumValueWitness) ->
-                                    let
-                                        dataHash =
-                                            -- TODO: Actually this re-encodes the datum, potentially with wrong cbor encoding.
-                                            -- What we should do is having a way to keep the raw binary of datums when decoding outputs.
-                                            Data.hash datumValueWitness
-                                    in
-                                    checkDatumMatch { expected = datumHash, witness = dataHash }
+                                Just (DatumValue { rawBytes }) ->
+                                    checkDatumMatch { expected = datumHash, witness = Data.rawDatumHash rawBytes }
                     in
                     getUtxo localStateUtxos utxoRef
                         |> Result.andThen (\output -> checkDatumOption output.datumOption)

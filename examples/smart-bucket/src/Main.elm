@@ -265,8 +265,14 @@ update msg model =
                 -- Extract the bucket owner from its datum
                 extractOwner bucket =
                     case bucket.datumOption of
-                        Just (DatumValue (Data.Constr _ (owner :: _))) ->
-                            Just owner
+                        -- Just (DatumValue (Data.Constr _ (owner :: _))) ->
+                        Just (DatumValue { rawBytes }) ->
+                            case Data.fromBytes rawBytes of
+                                Just (Data.Constr _ (owner :: _)) ->
+                                    Just owner
+
+                                _ ->
+                                    Nothing
 
                         _ ->
                             Nothing
@@ -294,7 +300,7 @@ update msg model =
                                     |> Data.Int
                         in
                         bucketOwner
-                            |> Maybe.map (\owner -> DatumValue (Data.Constr Natural.zero [ owner, input_bucket_index ]))
+                            |> Maybe.map (\owner -> Utxo.datumValueFromData <| Data.Constr Natural.zero [ owner, input_bucket_index ])
                     , referenceScript = Nothing
                     }
 
@@ -377,7 +383,7 @@ createBucket ({ localStateUtxos, myKeyCred, scriptAddress, loadedWallet, lockScr
             , SendToOutput
                 { address = scriptAddress
                 , amount = twoAda
-                , datumOption = Just (DatumValue datum)
+                , datumOption = Just (Utxo.datumValueFromData datum)
                 , referenceScript = Nothing
                 }
             ]

@@ -442,7 +442,7 @@ lock ({ localStateUtxos, myKeyCred, myStakeKeyHash, scriptAddress, loadedWallet,
             , SendToOutput
                 { address = scriptAddress
                 , amount = twoAda
-                , datumOption = Just (DatumValue datum)
+                , datumOption = Just (Utxo.datumValueFromData datum)
                 , referenceScript = Nothing
                 }
             ]
