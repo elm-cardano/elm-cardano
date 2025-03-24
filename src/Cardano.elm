@@ -396,17 +396,19 @@ import Cardano.Metadatum exposing (Metadatum)
 import Cardano.MultiAsset as MultiAsset exposing (AssetName, MultiAsset, PolicyId)
 import Cardano.Pool as Pool
 import Cardano.Redeemer as Redeemer exposing (Redeemer, RedeemerTag)
-import Cardano.Script as Script exposing (NativeScript, PlutusVersion(..), ScriptCbor)
+import Cardano.Script as Script exposing (NativeScript, PlutusVersion(..), Script, ScriptCbor)
 import Cardano.Transaction as Transaction exposing (Certificate(..), Transaction, TransactionBody, VKeyWitness, WitnessSet)
 import Cardano.Uplc as Uplc
 import Cardano.Utils exposing (UnitInterval)
-import Cardano.Utxo as Utxo exposing (Output, OutputReference, TransactionId)
+import Cardano.Utxo as Utxo exposing (DatumOption(..), Output, OutputReference, TransactionId)
 import Cardano.Value as Value exposing (Value)
+import Cbor.Decode as D
 import Cbor.Encode as E
-import Dict
 import Dict.Any exposing (AnyDict)
 import Integer exposing (Integer)
+import List.Extra
 import Natural exposing (Natural)
+import Result.Extra
 import Set
 
 
@@ -635,6 +637,13 @@ type TxFinalizationError
     | InsufficientManualFee { declared : Natural, computed : Natural }
     | NotEnoughMinAda String
     | ReferenceOutputsMissingFromLocalState (List OutputReference)
+    | MissingReferenceScript OutputReference
+    | InvalidScriptRef OutputReference (Bytes Script) String
+    | InvalidWalletAddress Address String
+    | ScriptHashMismatch { expected : Bytes CredentialHash, witness : Bytes CredentialHash } String
+    | ExtraneousDatumWitness (WitnessSource Data) String
+    | MissingDatumWitness (Bytes Utxo.DatumHash) String
+    | DatumHashMismatch { expected : Bytes Utxo.DatumHash, witness : Bytes Utxo.DatumHash } String
     | FailedToPerformCoinSelection CoinSelection.Error
     | CollateralSelectionError CoinSelection.Error
     | DuplicatedMetadataTags Int
@@ -1614,6 +1623,19 @@ processIntents govState localStateUtxos txIntents =
 
     else
         let
+            spendings : List SpendSource
+            spendings =
+                txIntents
+                    |> List.filterMap
+                        (\intent ->
+                            case intent of
+                                Spend source ->
+                                    Just source
+
+                                _ ->
+                                    Nothing
+                        )
+
             totalMintedAndBurned : MultiAsset Integer
             totalMintedAndBurned =
                 List.map (\m -> Map.singleton m.policyId m.assets) preProcessedIntents.mints
@@ -1641,6 +1663,7 @@ processIntents govState localStateUtxos txIntents =
         in
         validMinAdaPerOutput preCreatedOutputs.outputs
             |> Result.mapError NotEnoughMinAda
+            |> Result.andThen (\_ -> validateSpentOutputs localStateUtxos spendings)
             |> Result.map
                 (\_ ->
                     let
@@ -1657,6 +1680,12 @@ processIntents govState localStateUtxos txIntents =
                                 |> List.map (\signer -> ( signer, () ))
                                 |> Map.fromList
                                 |> Map.keys
+
+                        witnessToHex encoder source =
+                            encodeWitnessSource encoder source
+                                |> E.encode
+                                |> Bytes.fromBytes
+                                |> Bytes.toHex
                     in
                     { freeInputs = preProcessedIntents.freeInputs
                     , freeOutputs = preProcessedIntents.freeOutputs
@@ -1666,9 +1695,9 @@ processIntents govState localStateUtxos txIntents =
 
                     -- TODO: an improvement would consist in fetching the referenced from the local state utxos,
                     -- and extract the script values, to even remove duplicates both in ref and values.
-                    , nativeScriptSources = dedupWithCbor (encodeWitnessSource Script.encodeNativeScript) preProcessedIntents.nativeScriptSources
-                    , plutusScriptSources = dedupWithCbor (Tuple.second >> encodeWitnessSource Bytes.toCbor) plutusScriptSources
-                    , datumSources = dedupWithCbor (encodeWitnessSource Data.toCbor) preProcessedIntents.datumSources
+                    , nativeScriptSources = List.Extra.uniqueBy (witnessToHex Script.encodeNativeScript) preProcessedIntents.nativeScriptSources
+                    , plutusScriptSources = List.Extra.uniqueBy (Tuple.second >> witnessToHex Bytes.toCbor) plutusScriptSources
+                    , datumSources = List.Extra.uniqueBy (witnessToHex Data.toCbor) preProcessedIntents.datumSources
                     , expectedSigners = expectedSigners
                     , requiredSigners = requiredSigners
                     , totalMinted = totalMintedAndBurned
@@ -1758,15 +1787,6 @@ proposalRedeemer govAction =
             Nothing
 
 
-{-| Helper function
--}
-dedupWithCbor : (a -> E.Encoder) -> List a -> List a
-dedupWithCbor encode items =
-    List.map (\a -> ( E.encode (encode a) |> Bytes.fromBytes |> Bytes.toHex, a )) items
-        |> Dict.fromList
-        |> Dict.values
-
-
 encodeWitnessSource : (a -> E.Encoder) -> WitnessSource a -> E.Encoder
 encodeWitnessSource encode witnessSource =
     case witnessSource of
@@ -1804,6 +1824,227 @@ validMinAdaPerOutput outputs =
 
                 Err err ->
                     Err err
+
+
+{-| Do as many checks as we can on user-provided spendings.
+-}
+validateSpentOutputs : Utxo.RefDict Output -> List SpendSource -> Result TxFinalizationError ()
+validateSpentOutputs localStateUtxos spendings =
+    List.map (checkSpentSource localStateUtxos) spendings
+        |> Result.Extra.combine
+        |> Result.map (\_ -> ())
+
+
+{-| Do as many checks as we can on user-provided spendings.
+
+We can check things like:
+
+  - check address is of correct type (key/script)
+  - check script witness (same hash, ...)
+  - check datum witness (same hash, ...)
+
+-}
+checkSpentSource : Utxo.RefDict Output -> SpendSource -> Result TxFinalizationError ()
+checkSpentSource localStateUtxos spending =
+    case spending of
+        FromWallet walletSpending ->
+            checkWalletSpending localStateUtxos walletSpending
+
+        FromNativeScript { spentInput, nativeScriptWitness } ->
+            getUtxo localStateUtxos spentInput
+                |> Result.andThen (\output -> checkNativeScriptSpending localStateUtxos output nativeScriptWitness)
+
+        FromPlutusScript { spentInput, datumWitness, plutusScriptWitness } ->
+            getUtxo localStateUtxos spentInput
+                |> Result.andThen
+                    (\output ->
+                        checkDatumWitness localStateUtxos output.datumOption datumWitness
+                            |> Result.andThen (\_ -> checkPlutusScriptSpending localStateUtxos output plutusScriptWitness)
+                    )
+
+
+checkWalletSpending : Utxo.RefDict Output -> { a | address : Address, guaranteedUtxos : List OutputReference } -> Result TxFinalizationError ()
+checkWalletSpending localStateUtxos { address, guaranteedUtxos } =
+    let
+        checkRefAddressIsKey ref =
+            getUtxo localStateUtxos ref
+                |> Result.andThen (\output -> checkKeyAddress output.address)
+    in
+    checkKeyAddress address
+        |> Result.andThen
+            (\_ ->
+                List.map checkRefAddressIsKey guaranteedUtxos
+                    |> Result.Extra.combine
+                    |> Result.map (\_ -> ())
+            )
+
+
+checkNativeScriptSpending : Utxo.RefDict Output -> Output -> WitnessSource NativeScript -> Result TxFinalizationError ()
+checkNativeScriptSpending localStateUtxos spentInput nativeScriptWitness =
+    checkScriptAddress spentInput.address
+        |> Result.andThen
+            (\scriptHash ->
+                case nativeScriptWitness of
+                    WitnessByValue nativeScript ->
+                        checkScriptMatch { expected = scriptHash, witness = Script.hash (Script.Native nativeScript) }
+
+                    WitnessByReference outputRef ->
+                        getRefScript localStateUtxos outputRef
+                            |> Result.andThen (\refScript -> checkScriptMatch { expected = scriptHash, witness = Script.refHash refScript })
+            )
+
+
+{-| Check that the datum witness matches the output datum option.
+-}
+checkDatumWitness : Utxo.RefDict Output -> Maybe DatumOption -> Maybe (WitnessSource Data) -> Result TxFinalizationError ()
+checkDatumWitness localStateUtxos maybeDatumOption maybeDatumWitness =
+    case ( maybeDatumOption, maybeDatumWitness ) of
+        ( Nothing, Nothing ) ->
+            Ok ()
+
+        ( Nothing, Just datumWitness ) ->
+            Err <| ExtraneousDatumWitness datumWitness "Datum witness was provided but the corresponding UTxO has no datum"
+
+        ( Just (DatumValue _), Nothing ) ->
+            Ok ()
+
+        ( Just (DatumValue _), Just datumWitness ) ->
+            Err <| ExtraneousDatumWitness datumWitness "Datum witness was provided but the corresponding UTxO already has a datum provided by value"
+
+        ( Just (DatumHash datumHash), Nothing ) ->
+            Err <| MissingDatumWitness datumHash "Datum in UTxO is a hash, but no witness was provided"
+
+        ( Just (DatumHash datumHash), Just witness ) ->
+            let
+                checkDatumMatch hashes =
+                    if hashes.expected == hashes.witness then
+                        Ok ()
+
+                    else
+                        Err <| DatumHashMismatch hashes "Provided witness has wrong datum hash"
+            in
+            case witness of
+                WitnessByValue data ->
+                    checkDatumMatch { expected = datumHash, witness = Data.hash data }
+
+                WitnessByReference utxoRef ->
+                    let
+                        checkDatumOption datumOption =
+                            case datumOption of
+                                Nothing ->
+                                    Err <| MissingDatumWitness datumHash "The referenced UTxO presented as witness does not contain a datum"
+
+                                Just (DatumHash _) ->
+                                    Err <| MissingDatumWitness datumHash "The referenced UTxO presented as witness contains a datum hash again instead of a datum value"
+
+                                Just (DatumValue datumValueWitness) ->
+                                    let
+                                        dataHash =
+                                            -- TODO: Actually this re-encodes the datum, potentially with wrong cbor encoding.
+                                            -- What we should do is having a way to keep the raw binary of datums when decoding outputs.
+                                            Data.hash datumValueWitness
+                                    in
+                                    checkDatumMatch { expected = datumHash, witness = dataHash }
+                    in
+                    getUtxo localStateUtxos utxoRef
+                        |> Result.andThen (\output -> checkDatumOption output.datumOption)
+
+
+checkPlutusScriptSpending : Utxo.RefDict Output -> Output -> PlutusScriptWitness -> Result TxFinalizationError ()
+checkPlutusScriptSpending localStateUtxos spentInput plutusScriptWitness =
+    checkScriptAddress spentInput.address
+        |> Result.andThen
+            (\scriptHash ->
+                let
+                    ( version, witnessSource ) =
+                        plutusScriptWitness.script
+                in
+                case witnessSource of
+                    WitnessByValue scriptBytes ->
+                        let
+                            computedScriptHash =
+                                Script.plutusScriptFromBytes version scriptBytes
+                                    |> Script.Plutus
+                                    |> Script.hash
+                        in
+                        checkScriptMatch { expected = scriptHash, witness = computedScriptHash }
+
+                    WitnessByReference outputRef ->
+                        let
+                            checkValidScript scriptRef =
+                                let
+                                    scriptBytes =
+                                        Script.refBytes scriptRef
+                                in
+                                case D.decode Script.fromCbor (Bytes.toBytes scriptBytes) of
+                                    Just _ ->
+                                        Ok scriptRef
+
+                                    Nothing ->
+                                        Err <| InvalidScriptRef outputRef scriptBytes "UTxO contains an invalid reference script (bytes cannot be decoded into an actual script)"
+                        in
+                        getRefScript localStateUtxos outputRef
+                            |> Result.andThen checkValidScript
+                            |> Result.andThen (\scriptRef -> checkScriptMatch { expected = scriptHash, witness = Script.refHash scriptRef })
+            )
+
+
+checkScriptMatch : { expected : Bytes CredentialHash, witness : Bytes CredentialHash } -> Result TxFinalizationError ()
+checkScriptMatch hashes =
+    if hashes.expected == hashes.witness then
+        Ok ()
+
+    else
+        Err <| ScriptHashMismatch hashes "Provided witness has wrong script hash"
+
+
+getRefScript : Utxo.RefDict Output -> OutputReference -> Result TxFinalizationError Script.Reference
+getRefScript localStateUtxos ref =
+    getUtxo localStateUtxos ref
+        |> Result.andThen (.referenceScript >> Result.fromMaybe (MissingReferenceScript ref))
+
+
+getUtxo : Utxo.RefDict Output -> OutputReference -> Result TxFinalizationError Output
+getUtxo utxos ref =
+    Dict.Any.get ref utxos
+        |> Result.fromMaybe (ReferenceOutputsMissingFromLocalState [ ref ])
+
+
+checkAddress : Address -> (Credential -> Result TxFinalizationError a) -> Result TxFinalizationError a
+checkAddress address credentialValidator =
+    case address of
+        Byron _ ->
+            Err <| InvalidWalletAddress address "Byron addresses not supported"
+
+        Reward _ ->
+            Err <| InvalidWalletAddress address "Reward address cannot be spent"
+
+        Shelley { paymentCredential } ->
+            credentialValidator paymentCredential
+
+
+checkKeyAddress : Address -> Result TxFinalizationError ()
+checkKeyAddress address =
+    checkAddress address <|
+        \credential ->
+            case credential of
+                VKeyHash _ ->
+                    Ok ()
+
+                ScriptHash _ ->
+                    Err <| InvalidWalletAddress address "This is a script address, not a regular wallet key address"
+
+
+checkScriptAddress : Address -> Result TxFinalizationError (Bytes CredentialHash)
+checkScriptAddress address =
+    checkAddress address <|
+        \credential ->
+            case credential of
+                VKeyHash _ ->
+                    Err <| InvalidWalletAddress address "This is a regular wallet key address, not a script address"
+
+                ScriptHash scriptHash ->
+                    Ok scriptHash
 
 
 type alias ProcessedOtherInfo =
