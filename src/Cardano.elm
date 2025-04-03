@@ -1,5 +1,5 @@
 module Cardano exposing
-    ( TxIntent(..), SpendSource(..), ScriptWitness(..), NativeScriptWitness, PlutusScriptWitness, WitnessSource(..)
+    ( TxIntent(..), SpendSource(..), ScriptWitness(..), NativeScriptWitness, PlutusScriptWitness, WitnessSource(..), TxContext
     , CertificateIntent(..), CredentialWitness(..), VoterWitness(..)
     , VoteIntent, ProposalIntent, ActionProposal(..)
     , TxOtherInfo(..)
@@ -374,7 +374,7 @@ We can embed it directly in the transaction witness.
 
 ## Code Documentation
 
-@docs TxIntent, SpendSource, ScriptWitness, NativeScriptWitness, PlutusScriptWitness, WitnessSource
+@docs TxIntent, SpendSource, ScriptWitness, NativeScriptWitness, PlutusScriptWitness, WitnessSource, TxContext
 @docs CertificateIntent, CredentialWitness, VoterWitness
 @docs VoteIntent, ProposalIntent, ActionProposal
 @docs TxOtherInfo
@@ -391,7 +391,7 @@ import Cardano.Address as Address exposing (Address(..), Credential(..), Credent
 import Cardano.AuxiliaryData as AuxiliaryData exposing (AuxiliaryData)
 import Cardano.CoinSelection as CoinSelection
 import Cardano.Data as Data exposing (Data)
-import Cardano.Gov as Gov exposing (Action, ActionId, Anchor, Constitution, CostModels, Drep(..), ProposalProcedure, ProtocolParamUpdate, ProtocolVersion, Vote, Voter(..))
+import Cardano.Gov as Gov exposing (Action, ActionId, Anchor, Constitution, CostModels, Drep(..), ProposalProcedure, ProtocolParamUpdate, ProtocolVersion, Vote, Voter(..), VotingProcedure)
 import Cardano.Metadatum exposing (Metadatum)
 import Cardano.MultiAsset as MultiAsset exposing (AssetName, MultiAsset, PolicyId)
 import Cardano.Pool as Pool
@@ -417,7 +417,7 @@ import Set
 type TxIntent
     = SendTo Address Value
     | SendToOutput Output
-    | SendToOutputAdvanced (TransactionBody -> Output)
+    | SendToOutputAdvanced (TxContext -> Output)
       -- Spending assets from somewhere
     | Spend SpendSource
       -- Minting / burning assets
@@ -533,7 +533,7 @@ type alias NativeScriptWitness =
 -}
 type alias PlutusScriptWitness =
     { script : ( Script.PlutusVersion, WitnessSource (Bytes ScriptCbor) )
-    , redeemerData : TransactionBody -> Data
+    , redeemerData : TxContext -> Data
     , requiredSigners : List (Bytes CredentialHash)
     }
 
@@ -556,6 +556,79 @@ extractWitnessRef witnessSource =
 
         WitnessByReference ref ->
             Just ref
+
+
+{-| Some context available to the Tx builder to create redeemers and datums.
+
+The contents of the `TxContext` are very similar to those of the Plutus script context.
+This is because the goal is to help pre-compute offchain elements that will make
+onchain code more efficient.
+
+For example, you could pre-compute indexes of elements in inputs list,
+or the redeemers list in the script context for faster onchain lookups.
+For this reason, lists in this `TxContext` are ordered the same as in the Plutus script context.
+
+-}
+type alias TxContext =
+    { fee : Natural
+    , validityRange : { start : Maybe Int, end : Maybe Natural }
+    , inputs : List ( OutputReference, Output )
+    , referenceInputs : List ( OutputReference, Output )
+    , outputs : List Output
+    , mint : MultiAsset Integer
+    , certificates : List Certificate
+    , withdrawals : List ( StakeAddress, Natural )
+    , votes : List ( Voter, List ( ActionId, VotingProcedure ) )
+    , proposals : List ProposalProcedure
+    , requiredSigners : List (Bytes CredentialHash)
+    , redeemers : List Redeemer
+    , currentTreasuryValue : Maybe Natural
+    , treasuryDonation : Maybe Natural
+    }
+
+
+newTxContext : TxContext
+newTxContext =
+    { fee = Natural.zero
+    , validityRange = { start = Nothing, end = Nothing }
+    , inputs = []
+    , referenceInputs = []
+    , outputs = []
+    , mint = MultiAsset.empty
+    , certificates = []
+    , withdrawals = []
+    , votes = []
+    , proposals = []
+    , requiredSigners = []
+    , redeemers = []
+    , currentTreasuryValue = Nothing
+    , treasuryDonation = Nothing
+    }
+
+
+contextFromTx : Utxo.RefDict Output -> Transaction -> TxContext
+contextFromTx utxos { body, witnessSet } =
+    let
+        refsToUtxos refs =
+            List.filterMap (\ref -> Dict.Any.get ref utxos |> Maybe.map (Tuple.pair ref)) refs
+    in
+    { fee = body.fee
+    , validityRange = { start = body.validityIntervalStart, end = body.ttl }
+    , inputs = refsToUtxos body.inputs
+    , referenceInputs = refsToUtxos body.referenceInputs
+    , outputs = body.outputs
+    , mint = body.mint
+    , certificates = body.certificates
+    , withdrawals = body.withdrawals
+    , votes = body.votingProcedures
+    , proposals = body.proposalProcedures
+    , requiredSigners = body.requiredSigners
+
+    -- , redeemers = Debug.todo "order redeemers same is in Script Context"
+    , redeemers = witnessSet.redeemer |> Maybe.withDefault []
+    , currentTreasuryValue = body.currentTreasuryValue
+    , treasuryDonation = body.treasuryDonation
+    }
 
 
 {-| Governance vote.
@@ -981,8 +1054,8 @@ finalizeAdvanced { govState, localStateUtxos, coinSelectionAlgo, evalScriptsCost
 
         ( Ok processedIntents, Ok processedOtherInfo ) ->
             let
-                buildTxRound : TransactionBody -> Fee -> Result TxFinalizationError TxFinalized
-                buildTxRound roundTxBody roundFees =
+                buildTxRound : TxContext -> Fee -> Result TxFinalizationError TxFinalized
+                buildTxRound txContext roundFees =
                     let
                         ( feeAmount, feeAddresses ) =
                             case roundFees of
@@ -1029,9 +1102,9 @@ finalizeAdvanced { govState, localStateUtxos, coinSelectionAlgo, evalScriptsCost
                             accumPerAddressSelection coinSelection
                                 --> { selectedInputs : Utxo.RefDict Ouptut, createdOutputs : List Output }
                                 -- Aggregate with pre-selected inputs and pre-created outputs
-                                |> (\selection -> updateTxBody processedIntents selection roundTxBody)
+                                |> (\selection -> updateTxContext localStateUtxos processedIntents selection txContext)
                                 --> TransactionBody
-                                |> buildTx localStateUtxos feeAmount collateralSelection processedIntents processedOtherInfo
+                                |> buildTx feeAmount collateralSelection processedIntents processedOtherInfo
                         )
                         (computeCoinSelection localStateUtxos roundFees processedIntents coinSelectionAlgo)
                         (computeCollateralSelection localStateUtxos collateralSources collateralAmount)
@@ -1057,16 +1130,16 @@ finalizeAdvanced { govState, localStateUtxos, coinSelectionAlgo, evalScriptsCost
             --   - estimate Tx fees
             --   - adjust coin selection
             --   - adjust redeemers
-            buildTxRound Transaction.newBody fee
+            buildTxRound newTxContext fee
                 --> Result String Transaction
-                |> Result.andThen (\{ tx } -> buildTxRound tx.body (adjustFees tx))
+                |> Result.andThen (\{ tx } -> buildTxRound (contextFromTx localStateUtxos tx) (adjustFees tx))
                 -- Evaluate plutus script cost
                 |> Result.andThen (\{ tx } -> (adjustExecutionCosts <| evalScriptsCosts localStateUtxos) tx)
                 -- Redo a final round of above
-                |> Result.andThen (\tx -> buildTxRound tx.body (adjustFees tx))
+                |> Result.andThen (\tx -> buildTxRound (contextFromTx localStateUtxos tx) (adjustFees tx))
                 |> Result.andThen (\{ tx } -> (adjustExecutionCosts <| evalScriptsCosts localStateUtxos) tx)
                 -- Redo a final round of above
-                |> Result.andThen (\tx -> buildTxRound tx.body (adjustFees tx))
+                |> Result.andThen (\tx -> buildTxRound (contextFromTx localStateUtxos tx) (adjustFees tx))
                 |> Result.andThen
                     (\{ tx, expectedSignatures } ->
                         (adjustExecutionCosts <| evalScriptsCosts localStateUtxos) tx
@@ -1151,18 +1224,18 @@ type alias PreProcessedIntents =
     { freeInputs : Address.Dict Value
     , freeOutputs : Address.Dict Value
     , guaranteedUtxos : List OutputReference
-    , preSelected : List { input : OutputReference, redeemer : Maybe (TransactionBody -> Data) }
-    , preCreated : TransactionBody -> { sum : Value, outputs : List Output }
+    , preSelected : List { input : OutputReference, redeemer : Maybe (TxContext -> Data) }
+    , preCreated : TxContext -> { sum : Value, outputs : List Output }
     , nativeScriptSources : List (WitnessSource NativeScript)
     , plutusScriptSources : List ( PlutusVersion, WitnessSource (Bytes ScriptCbor) )
     , datumSources : List (WitnessSource Data)
     , expectedSigners : List (List (Bytes CredentialHash)) -- like requiredSigners, but not to put in the required_signers field of the Tx
     , requiredSigners : List (List (Bytes CredentialHash))
-    , mints : List { policyId : Bytes CredentialHash, assets : BytesMap AssetName Integer, redeemer : Maybe (TransactionBody -> Data) }
-    , withdrawals : List { stakeAddress : StakeAddress, amount : Natural, redeemer : Maybe (TransactionBody -> Data) }
-    , certificates : List ( Certificate, Maybe (TransactionBody -> Data) )
+    , mints : List { policyId : Bytes CredentialHash, assets : BytesMap AssetName Integer, redeemer : Maybe (TxContext -> Data) }
+    , withdrawals : List { stakeAddress : StakeAddress, amount : Natural, redeemer : Maybe (TxContext -> Data) }
+    , certificates : List ( Certificate, Maybe (TxContext -> Data) )
     , proposalIntents : List ProposalIntent
-    , votes : List { voter : Voter, votes : List VoteIntent, redeemer : Maybe (TransactionBody -> Data) }
+    , votes : List { voter : Voter, votes : List VoteIntent, redeemer : Maybe (TxContext -> Data) }
     , totalDeposit : Natural
     , totalRefund : Natural
     }
@@ -1215,10 +1288,10 @@ preProcessIntents txIntents =
 
                 SendToOutput newOutput ->
                     let
-                        newPreCreated txBody =
+                        newPreCreated txContext =
                             let
                                 { sum, outputs } =
-                                    preProcessedIntents.preCreated txBody
+                                    preProcessedIntents.preCreated txContext
                             in
                             { sum = Value.add sum newOutput.amount
                             , outputs = newOutput :: outputs
@@ -1228,13 +1301,13 @@ preProcessIntents txIntents =
 
                 SendToOutputAdvanced f ->
                     let
-                        newPreCreated txBody =
+                        newPreCreated txContext =
                             let
                                 { sum, outputs } =
-                                    preProcessedIntents.preCreated txBody
+                                    preProcessedIntents.preCreated txContext
 
                                 newOutput =
-                                    f txBody
+                                    f txContext
                             in
                             { sum = Value.add sum newOutput.amount
                             , outputs = newOutput :: outputs
@@ -1481,19 +1554,19 @@ type alias ProcessedIntents =
     { freeInputs : Address.Dict Value
     , freeOutputs : Address.Dict Value
     , guaranteedUtxos : Address.Dict (List OutputReference)
-    , preSelected : { sum : Value, inputs : Utxo.RefDict (Maybe (TransactionBody -> Data)) }
-    , preCreated : TransactionBody -> { sum : Value, outputs : List Output }
+    , preSelected : { sum : Value, inputs : Utxo.RefDict (Maybe (TxContext -> Data)) }
+    , preCreated : TxContext -> { sum : Value, outputs : List Output }
     , nativeScriptSources : List (WitnessSource NativeScript)
     , plutusScriptSources : List ( PlutusVersion, WitnessSource (Bytes ScriptCbor) )
     , datumSources : List (WitnessSource Data)
     , expectedSigners : List (Bytes CredentialHash)
     , requiredSigners : List (Bytes CredentialHash)
     , totalMinted : MultiAsset Integer
-    , mintRedeemers : BytesMap PolicyId (Maybe (TransactionBody -> Data))
-    , withdrawals : Address.StakeDict { amount : Natural, redeemer : Maybe (TransactionBody -> Data) }
-    , certificates : List ( Certificate, Maybe (TransactionBody -> Data) )
+    , mintRedeemers : BytesMap PolicyId (Maybe (TxContext -> Data))
+    , withdrawals : Address.StakeDict { amount : Natural, redeemer : Maybe (TxContext -> Data) }
+    , certificates : List ( Certificate, Maybe (TxContext -> Data) )
     , proposals : List ( ProposalProcedure, Maybe Data )
-    , votes : Gov.VoterDict { votes : List VoteIntent, redeemer : Maybe (TransactionBody -> Data) }
+    , votes : Gov.VoterDict { votes : List VoteIntent, redeemer : Maybe (TxContext -> Data) }
     }
 
 
@@ -1589,15 +1662,15 @@ processIntents govState localStateUtxos txIntents =
 
         -- Add burned tokens to preCreated
         preCreated =
-            \txBody ->
+            \txContext ->
                 let
                     { sum, outputs } =
-                        preProcessedIntents.preCreated txBody
+                        preProcessedIntents.preCreated txContext
                 in
                 { sum = Value.add sum totalBurnedValue, outputs = outputs }
 
         preCreatedOutputs =
-            preCreated Transaction.newBody
+            preCreated newTxContext
 
         -- Compute total inputs and outputs to check the Tx balance
         totalInput =
@@ -1802,9 +1875,9 @@ encodeWitnessSource encode witnessSource =
 addPreSelectedInput :
     OutputReference
     -> Value
-    -> Maybe (TransactionBody -> Data)
-    -> { sum : Value, inputs : Utxo.RefDict (Maybe (TransactionBody -> Data)) }
-    -> { sum : Value, inputs : Utxo.RefDict (Maybe (TransactionBody -> Data)) }
+    -> Maybe (TxContext -> Data)
+    -> { sum : Value, inputs : Utxo.RefDict (Maybe (TxContext -> Data)) }
+    -> { sum : Value, inputs : Utxo.RefDict (Maybe (TxContext -> Data)) }
 addPreSelectedInput ref value maybeRedeemer { sum, inputs } =
     { sum = Value.add value sum
     , inputs = Dict.Any.insert ref maybeRedeemer inputs
@@ -2472,23 +2545,19 @@ accumPerAddressSelection allSelections =
         allSelections
 
 
-{-| Helper function to update Tx inputs/outputs after coin selection.
+{-| Helper function to update the TxContext after coin selection.
 -}
-updateTxBody : ProcessedIntents -> { selectedInputs : Utxo.RefDict Output, createdOutputs : List Output } -> TransactionBody -> TransactionBody
-updateTxBody intents { selectedInputs, createdOutputs } old =
+updateTxContext : Utxo.RefDict Output -> ProcessedIntents -> { selectedInputs : Utxo.RefDict Output, createdOutputs : List Output } -> TxContext -> TxContext
+updateTxContext localStateUtxos intents { selectedInputs, createdOutputs } old =
     -- reference inputs do not change with UTxO selection, only spent inputs
     { old
         | inputs =
             let
-                preSelected : Utxo.RefDict ()
+                preSelected : Utxo.RefDict Output
                 preSelected =
-                    Dict.Any.map (\_ _ -> ()) intents.preSelected.inputs
-
-                algoSelected : Utxo.RefDict ()
-                algoSelected =
-                    Dict.Any.map (\_ _ -> ()) selectedInputs
+                    Dict.Any.filterMap (\ref _ -> Dict.Any.get ref localStateUtxos) intents.preSelected.inputs
             in
-            Dict.Any.keys (Dict.Any.union preSelected algoSelected)
+            Dict.Any.toList (Dict.Any.union preSelected selectedInputs)
         , outputs = (intents.preCreated old).outputs ++ createdOutputs
     }
 
@@ -2496,14 +2565,13 @@ updateTxBody intents { selectedInputs, createdOutputs } old =
 {-| Build the Transaction from the processed intents and the latest inputs/outputs.
 -}
 buildTx :
-    Utxo.RefDict Output
-    -> Natural
+    Natural
     -> CoinSelection.Selection
     -> ProcessedIntents
     -> ProcessedOtherInfo
-    -> TransactionBody
+    -> TxContext
     -> TxFinalized
-buildTx localStateUtxos feeAmount collateralSelection processedIntents otherInfo txBody =
+buildTx feeAmount collateralSelection processedIntents otherInfo txContext =
     let
         -- WitnessSet ######################################
         --
@@ -2520,12 +2588,12 @@ buildTx localStateUtxos feeAmount collateralSelection processedIntents otherInfo
         preSelected : Utxo.RefDict (Maybe Data)
         preSelected =
             processedIntents.preSelected.inputs
-                |> Dict.Any.map (\_ -> Maybe.map (\f -> f txBody))
+                |> Dict.Any.map (\_ -> Maybe.map (\f -> f txContext))
 
         -- Add a default Nothing to all inputs picked by the selection algorithm.
         algoSelected : Utxo.RefDict (Maybe Data)
         algoSelected =
-            List.map (\ref -> ( ref, Nothing )) txBody.inputs
+            List.map (\( ref, _ ) -> ( ref, Nothing )) txContext.inputs
                 |> Utxo.refDictFromList
                 |> (\allSpent -> Dict.Any.diff allSpent preSelected)
 
@@ -2556,7 +2624,7 @@ buildTx localStateUtxos feeAmount collateralSelection processedIntents otherInfo
                 |> List.indexedMap
                     (\id maybeRedeemerF ->
                         Maybe.map
-                            (\redeemerF -> makeRedeemer Redeemer.Mint id (redeemerF txBody))
+                            (\redeemerF -> makeRedeemer Redeemer.Mint id (redeemerF txContext))
                             maybeRedeemerF
                     )
                 |> List.filterMap identity
@@ -2566,7 +2634,7 @@ buildTx localStateUtxos feeAmount collateralSelection processedIntents otherInfo
         sortedWithdrawals : List ( StakeAddress, Natural, Maybe Data )
         sortedWithdrawals =
             Dict.Any.toList processedIntents.withdrawals
-                |> List.map (\( addr, w ) -> ( addr, w.amount, Maybe.map (\f -> f txBody) w.redeemer ))
+                |> List.map (\( addr, w ) -> ( addr, w.amount, Maybe.map (\f -> f txContext) w.redeemer ))
 
         -- Build the withdrawals redeemers while keeping the index in the sorted list.
         sortedWithdrawalsRedeemers : List Redeemer
@@ -2585,7 +2653,7 @@ buildTx localStateUtxos feeAmount collateralSelection processedIntents otherInfo
                 |> List.indexedMap
                     (\id ( _, maybeRedeemerF ) ->
                         Maybe.map
-                            (\redeemerF -> makeRedeemer Redeemer.Cert id (redeemerF txBody))
+                            (\redeemerF -> makeRedeemer Redeemer.Cert id (redeemerF txContext))
                             maybeRedeemerF
                     )
                 |> List.filterMap identity
@@ -2601,7 +2669,7 @@ buildTx localStateUtxos feeAmount collateralSelection processedIntents otherInfo
                 |> List.filterMap identity
 
         -- Sort votes with the Voter order
-        sortedVotes : List ( Voter, { votes : List VoteIntent, redeemer : Maybe (TransactionBody -> Data) } )
+        sortedVotes : List ( Voter, { votes : List VoteIntent, redeemer : Maybe (TxContext -> Data) } )
         sortedVotes =
             Dict.Any.toList processedIntents.votes
 
@@ -2612,7 +2680,7 @@ buildTx localStateUtxos feeAmount collateralSelection processedIntents otherInfo
                 |> List.indexedMap
                     (\id ( _, { redeemer } ) ->
                         Maybe.map
-                            (\redeemerF -> makeRedeemer Redeemer.Vote id (redeemerF txBody))
+                            (\redeemerF -> makeRedeemer Redeemer.Vote id (redeemerF txContext))
                             redeemer
                     )
                 |> List.filterMap identity
@@ -2620,12 +2688,8 @@ buildTx localStateUtxos feeAmount collateralSelection processedIntents otherInfo
         -- Look for inputs at addresses that will need signatures
         walletCredsInInputs : List (Bytes CredentialHash)
         walletCredsInInputs =
-            txBody.inputs
-                |> List.filterMap
-                    (\ref ->
-                        Dict.Any.get ref localStateUtxos
-                            |> Maybe.andThen (Address.extractPubKeyHash << .address)
-                    )
+            txContext.inputs
+                |> List.filterMap (\( _, output ) -> Address.extractPubKeyHash output.address)
 
         -- Look for stake credentials needed for withdrawals
         withdrawalsStakeCreds : List (Bytes CredentialHash)
@@ -2721,7 +2785,7 @@ buildTx localStateUtxos feeAmount collateralSelection processedIntents otherInfo
         -- Regroup all OutputReferences from witnesses
         allReferenceInputs =
             List.concat
-                [ txBody.referenceInputs
+                [ List.map Tuple.first txContext.referenceInputs
                 , otherInfo.referenceInputs
                 , nativeScriptRefs
                 , plutusScriptRefs
@@ -2753,8 +2817,8 @@ buildTx localStateUtxos feeAmount collateralSelection processedIntents otherInfo
 
         updatedTxBody : TransactionBody
         updatedTxBody =
-            { inputs = txBody.inputs
-            , outputs = txBody.outputs
+            { inputs = List.map Tuple.first txContext.inputs
+            , outputs = txContext.outputs
             , fee = feeAmount
             , ttl = Maybe.map .end otherInfo.timeValidityRange
             , certificates = List.map Tuple.first processedIntents.certificates

@@ -186,7 +186,7 @@ suite =
                             [] ->
                                 0
 
-                            ( id, ref ) :: next ->
+                            ( id, ( ref, _ ) ) :: next ->
                                 if ref == utxoBeingSpent then
                                     id
 
