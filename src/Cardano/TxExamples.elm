@@ -149,7 +149,7 @@ findSpendingUtxo inputs =
         [] ->
             0
 
-        ( id, ref ) :: next ->
+        ( id, ( ref, _ ) ) :: next ->
             if ref == utxoBeingSpent then
                 id
 
@@ -181,8 +181,8 @@ example3 _ =
                 }
 
         -- Build a redeemer that contains the index of the spent script input.
-        redeemer txBody =
-            List.indexedMap Tuple.pair txBody.inputs
+        redeemer txContext =
+            List.indexedMap Tuple.pair txContext.inputs
                 |> findSpendingUtxo
                 |> (Data.Int << Integer.fromSafeInt)
 
