@@ -614,17 +614,26 @@ contextFromTx utxos { body, witnessSet } =
     in
     { fee = body.fee
     , validityRange = { start = body.validityIntervalStart, end = body.ttl }
+
+    -- Inputs are already ordered in the updateTxContext function.
+    -- Then order is kept in the buildTx function, generating the body in use here.
     , inputs = refsToUtxos body.inputs
+
+    -- Reference inputs are sorted in the buildTx function.
     , referenceInputs = refsToUtxos body.referenceInputs
     , outputs = body.outputs
     , mint = body.mint
     , certificates = body.certificates
+
+    -- Withdrawals are sorted in the buildTx function.
     , withdrawals = body.withdrawals
+
+    -- Votes are sorted in the buildTx function.
     , votes = body.votingProcedures
     , proposals = body.proposalProcedures
     , requiredSigners = body.requiredSigners
 
-    -- , redeemers = Debug.todo "order redeemers same is in Script Context"
+    -- We order the redeemers in the witness set already in the buildTx function.
     , redeemers = witnessSet.redeemer |> Maybe.withDefault []
     , currentTreasuryValue = body.currentTreasuryValue
     , treasuryDonation = body.treasuryDonation
@@ -2550,6 +2559,7 @@ accumPerAddressSelection allSelections =
 updateTxContext : Utxo.RefDict Output -> ProcessedIntents -> { selectedInputs : Utxo.RefDict Output, createdOutputs : List Output } -> TxContext -> TxContext
 updateTxContext localStateUtxos intents { selectedInputs, createdOutputs } old =
     -- reference inputs do not change with UTxO selection, only spent inputs
+    -- Inputs are sorted by output ref
     { old
         | inputs =
             let
@@ -2759,12 +2769,14 @@ buildTx feeAmount collateralSelection processedIntents otherInfo txContext =
             , redeemer =
                 nothingIfEmptyList <|
                     List.concat
+                        -- Order is the same as in the Plutus script context.
+                        -- See test "where the redeemers are correctly sorted".
                         [ sortedSpendRedeemers
                         , sortedMintRedeemers
-                        , sortedWithdrawalsRedeemers
                         , certRedeemers
-                        , proposalRedeemers
+                        , sortedWithdrawalsRedeemers
                         , voteRedeemers
+                        , proposalRedeemers
                         ]
             }
 
@@ -2783,6 +2795,7 @@ buildTx feeAmount collateralSelection processedIntents otherInfo txContext =
         -- TransactionBody #################################
         --
         -- Regroup all OutputReferences from witnesses
+        -- Ref inputs are sorted (important).
         allReferenceInputs =
             List.concat
                 [ List.map Tuple.first txContext.referenceInputs
