@@ -1,0 +1,112 @@
+name: elm
+
+on:
+  push:
+    branches:
+      - main
+  pull_request:
+
+jobs:
+  make:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: mpizenberg/elm-tooling-action@v1.5
+        with:
+          cache-key: elm-home-make${{ hashFiles('elm-tooling.json', 'elm.json') }}
+          cache-restore-key: elm-home-make
+      - run: elm make
+
+  build-elm-cardano:
+    name: Build elm-cardano binary
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Download the uplc-wasm archive
+        run: curl -LO 'https://github.com/mpizenberg/uplc-wasm/releases/download/v0.3.0/my-artifact.zip'
+      - run: unzip my-artifact.zip -d cli/pkg-uplc-wasm
+
+      - uses: dtolnay/rust-toolchain@stable
+      - name: build elm-cardano
+        run: cargo build --release
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: elm-cardano-bin
+          path: target/release/elm-cardano
+          compression-level: 0 # no compression
+
+  test:
+    needs: build-elm-cardano
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          name: elm-cardano-bin
+          path: target/release
+      - name: Add elm-compiler to path
+        run: |
+          chmod +x target/release/elm-cardano
+          echo "${GITHUB_WORKSPACE}/target/release" >> $GITHUB_PATH
+      - uses: mpizenberg/elm-tooling-action@v1.5
+        with:
+          cache-key: elm-home-tests${{ hashFiles('elm-tooling.json', 'elm.json') }}
+          cache-restore-key: elm-home-tests
+      - uses: actions/setup-node@v4
+      - run: npm install elm-test
+      - run: npx elm-test --compiler elm-cardano
+      - name: Try elm-cardano init
+        run: |
+          mkdir init && cd init
+          mkdir elm-cardano && cp -r ../src elm-cardano/src
+          elm-cardano init
+          elm-cardano make src/Main.elm --output main.js
+
+  examples:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: mpizenberg/elm-tooling-action@v1.5
+        with:
+          cache-key: elm-home-examples${{ hashFiles('elm-tooling.json', 'elm.json') }}
+          cache-restore-key: elm-home-examples
+      - run: cd examples/wallet-cip30 && elm make src/Main.elm --output /dev/null
+      - run: cd examples/ogmios && elm make src/Main.elm --output /dev/null
+      - run: cd examples/txbuild && elm make src/Main.elm --output /dev/null
+      - run: cd examples/decode-data-custom-type && elm make src/Main.elm --output /dev/null
+      - run: cd examples/aiken-hello-world && elm make src/Main.elm --output /dev/null
+      - run: cd examples/aiken-gift-card && elm make src/Main.elm --output /dev/null
+      - run: cd examples/smart-bucket && elm make src/Main.elm --output /dev/null
+      - run: cd examples/fee-provider && elm make src/Main.elm src/External.elm --output /dev/null
+      - run: cd examples/vote-script && elm make src/Main.elm src/External.elm --output /dev/null
+      - run: cd examples/vote-native-script && elm make src/Main.elm src/External.elm --output /dev/null
+
+  format:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: mpizenberg/elm-tooling-action@v1.5
+        with:
+          cache-key: elm-home-format${{ hashFiles('elm-tooling.json', 'elm.json') }}
+          cache-restore-key: elm-home-format
+      - run: elm-format src/ tests/ examples/ --validate
+
+  review:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "lts/*"
+          cache: "npm"
+      - name: npm ci
+        env:
+          # elm-tooling install is handled by elm-tooling-action
+          NO_ELM_TOOLING_INSTALL: 1
+        run: npm ci
+      - uses: mpizenberg/elm-tooling-action@v1.5
+        with:
+          cache-key: elm-home-review${{ hashFiles('elm-tooling.json', 'elm.json', 'review/elm.json') }}
+          cache-restore-key: elm-home-review
+      - run: npm exec --no elm-review
