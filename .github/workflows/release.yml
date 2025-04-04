@@ -1,8 +1,7 @@
 on:
-    pull_request:
+    # pull_request:
     push:
-        tags:
-            - "v*"
+        tags: ["v*"]
 
 jobs:
     # Determine if this is a release
@@ -81,6 +80,7 @@ jobs:
     # Create NPM Package
     create-npm-package:
         needs: [check-release, prepare-config]
+        if: ${{ needs.check-release.outputs.is_release == 'true' }}
         runs-on: ubuntu-latest
         steps:
             - uses: actions/checkout@v4
@@ -106,8 +106,7 @@ jobs:
 
     # Create GitHub Release
     create-release:
-        needs: [check-release, build, create-npm-package]
-        if: ${{ needs.check-release.outputs.is_release == 'true' }}
+        needs: [build, create-npm-package]
         runs-on: ubuntu-latest
         steps:
             - uses: actions/checkout@v4
@@ -139,6 +138,8 @@ jobs:
 
             - name: Create GitHub Release
               uses: softprops/action-gh-release@v2
+              env:
+                  GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
               with:
                   files: release/*
                   draft: true
