@@ -56,7 +56,7 @@ https.get(url, function(response) {
   response.pipe(file);
   file.on('finish', function() {
     file.close();
-    if (platform !== 'win32') {
+    if (currentPlatform !== 'win32') {
       fs.chmodSync(binaryPath, '755');
     }
     console.log('Binary downloaded and made executable');
