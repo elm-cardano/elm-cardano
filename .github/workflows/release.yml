@@ -25,8 +25,7 @@ jobs:
             - uses: actions/checkout@v4
             - name: Generate build matrix
               id: set-matrix
-              run: |
-                  echo matrix={"include":$(cat release-config/targets.json)} >> $GITHUB_OUTPUT
+              run: echo matrix={"include":$(cat release-config/targets-small.json)} >> $GITHUB_OUTPUT
 
     # Build binaries
     build:
