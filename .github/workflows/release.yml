@@ -103,7 +103,7 @@ jobs:
                   cd npm-package
                   npm pack
                   # Move tarball to parent directory and rename
-                  mv *.tgz ../${NPM_PKG_NAME}-$VERSION.tgz
+                  mv *.tgz ../${NPM_PKG_NAME}.tgz
 
             - name: Upload NPM Package Tarball
               uses: actions/upload-artifact@v4
