@@ -26,6 +26,9 @@ fs.writeFileSync(
     JSON.stringify(packageJson, null, 2),
 );
 
+// Extract the targets from the config
+const targets = JSON.parse(fs.readFileSync(targetsConfigPath, "utf8"));
+
 // Create install.js script
 const installJs = `const { execSync } = require('child_process');
 const os = require('os');
@@ -35,7 +38,7 @@ const https = require('https');
 
 const currentPlatform = os.platform(); // e.g., 'darwin', 'linux', 'win32'
 const currentArch = os.arch(); // e.g., 'x64', 'arm64'
-const targets = JSON.parse(fs.readFileSync(${targetsConfigPath}, "utf8"));
+const targets = JSON.parse(${JSON.stringify(targets)});
 const target = targets.find(entry => entry.platform === currentPlatform && entry.arch === currentArch);
 if (!target) {
   throw new Error("Unsupported platform or architecture: " + currentPlatform + "-" + currentArch);
