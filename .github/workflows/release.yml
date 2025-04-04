@@ -3,6 +3,9 @@ on:
     push:
         tags: ["v*"]
 
+permissions:
+    contents: write
+
 jobs:
     # Determine if this is a release
     check-release:
@@ -138,8 +141,6 @@ jobs:
 
             - name: Create GitHub Release
               uses: softprops/action-gh-release@v2
-              env:
-                  GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
               with:
                   files: release/*
                   draft: true
