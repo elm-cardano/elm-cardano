@@ -8,6 +8,7 @@ permissions:
 
 env:
     NPM_PKG_NAME: elm-cardano-npm-pkg
+    TARGETS_JSON: release-config/targets.json
 
 jobs:
     # Determine if this is a release
@@ -30,7 +31,7 @@ jobs:
             - uses: actions/checkout@v4
             - name: Generate build matrix
               id: set-matrix
-              run: echo matrix={"include":$(cat release-config/targets-small.json)} >> $GITHUB_OUTPUT
+              run: echo matrix={"include":$(cat $TARGETS_JSON)} >> $GITHUB_OUTPUT
 
     # Build binaries
     build:
@@ -97,7 +98,7 @@ jobs:
                   VERSION="${{ needs.check-release.outputs.version }}"
                   VERSION=${VERSION#v}
                   # Generate the package files
-                  node release-config/create-npm-package.js release-config/package.json "$VERSION" release-config/targets-small.json
+                  node release-config/create-npm-package.js release-config/package.json "$VERSION" $TARGETS_JSON
                   # Create tarball
                   cd npm-package
                   npm pack
