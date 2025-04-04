@@ -3,8 +3,8 @@
     "name": "linux-x86_64",
     "os": "ubuntu-latest",
     "target": "x86_64-unknown-linux-musl",
-    "binary_name": "binary-name",
-    "asset_name": "binary-name-linux-x86_64",
+    "binary_name": "elm-cardano",
+    "asset_name": "elm-cardano-x86_64-unknown-linux-musl",
     "use_cross": true,
     "platform": "linux",
     "arch": "x64"
@@ -13,8 +13,8 @@
     "name": "windows-x86_64",
     "os": "windows-latest",
     "target": "x86_64-pc-windows-msvc",
-    "binary_name": "binary-name.exe",
-    "asset_name": "binary-name-windows-x86_64.exe",
+    "binary_name": "elm-cardano.exe",
+    "asset_name": "elm-cardano-x86_64-pc-windows-msvc.exe",
     "use_cross": false,
     "platform": "win32",
     "arch": "x64"
