@@ -77,3 +77,69 @@ jobs:
                   name: ${{ matrix.name }}
                   path: release/${{ matrix.asset_name }}
                   if-no-files-found: error
+
+    # Create NPM Package
+    create-npm-package:
+        needs: [check-release, prepare-config]
+        runs-on: ubuntu-latest
+        steps:
+            - uses: actions/checkout@v4
+            - uses: actions/setup-node@v4
+
+            - name: Create NPM Package
+              run: |
+                  VERSION="${{ needs.check-release.outputs.version }}"
+                  VERSION=${VERSION#v}
+                  # Generate the package files
+                  node release-config/create-npm-package.js release-config/package.json "$VERSION" release-config/targets-small.json
+                  # Create tarball
+                  cd npm-package
+                  npm pack
+                  # Move tarball to parent directory
+                  mv *.tgz ..
+
+            - name: Upload NPM Package Tarball
+              uses: actions/upload-artifact@v4
+              with:
+                  name: npm-package-tarball
+                  path: "*.tgz"
+
+    # Create GitHub Release
+    create-release:
+        needs: [check-release, build, create-npm-package]
+        if: ${{ needs.check-release.outputs.is_release == 'true' }}
+        runs-on: ubuntu-latest
+        steps:
+            - uses: actions/checkout@v4
+            - name: Download Binary Artifacts
+              uses: actions/download-artifact@v4
+              with:
+                  path: ./artifacts
+
+            - name: Prepare Release Files
+              run: |
+                  mkdir -p release
+
+                  # Copy all artifacts
+                  for dir in artifacts/*; do
+                    if [ -d "$dir" ] && [ "$(basename "$dir")" != "npm-package-tarball" ]; then
+                      cp -r $dir/* release/
+                    fi
+                  done
+
+                  # Copy NPM package
+                  cp artifacts/npm-package-tarball/*.tgz release/
+
+                  # Set executable permissions for Linux and macOS binaries
+                  chmod +x release/*-linux-* release/*-macos-* || true
+
+                  # Generate checksums
+                  cd release
+                  sha256sum * > checksums.txt
+
+            - name: Create GitHub Release
+              uses: softprops/action-gh-release@v2
+              with:
+                  files: release/*
+                  draft: true
+                  generate_release_notes: true
