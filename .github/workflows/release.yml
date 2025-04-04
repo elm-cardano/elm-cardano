@@ -26,7 +26,7 @@ jobs:
             - name: Generate build matrix
               id: set-matrix
               run: |
-                  echo 'matrix={"include": $(cat release-config/targets.json)}' >> $GITHUB_OUTPUT
+                  echo matrix={"include":$(cat release-config/targets.json)} >> $GITHUB_OUTPUT
 
     # Build binaries
     build:
