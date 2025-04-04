@@ -72,9 +72,8 @@ jobs:
                   fi
 
             - name: Upload Artifact
-              uses: actions/upload-artifact@v3
+              uses: actions/upload-artifact@v4
               with:
                   name: ${{ matrix.name }}
                   path: release/${{ matrix.asset_name }}
                   if-no-files-found: error
-                  retention-days: 5
