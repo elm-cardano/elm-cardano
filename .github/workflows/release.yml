@@ -6,6 +6,9 @@ on:
 permissions:
     contents: write
 
+env:
+    NPM_PKG_NAME: elm-cardano-npm-pkg
+
 jobs:
     # Determine if this is a release
     check-release:
@@ -98,8 +101,8 @@ jobs:
                   # Create tarball
                   cd npm-package
                   npm pack
-                  # Move tarball to parent directory
-                  mv *.tgz ..
+                  # Move tarball to parent directory and rename
+                  mv *.tgz ../${NPM_PKG_NAME}-$VERSION.tgz
 
             - name: Upload NPM Package Tarball
               uses: actions/upload-artifact@v4

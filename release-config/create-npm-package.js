@@ -38,7 +38,7 @@ const https = require('https');
 
 const currentPlatform = os.platform(); // e.g., 'darwin', 'linux', 'win32'
 const currentArch = os.arch(); // e.g., 'x64', 'arm64'
-const targets = JSON.parse(${JSON.stringify(targets)});
+const targets = ${JSON.stringify(targets)};
 const target = targets.find(entry => entry.platform === currentPlatform && entry.arch === currentArch);
 if (!target) {
   throw new Error("Unsupported platform or architecture: " + currentPlatform + "-" + currentArch);
