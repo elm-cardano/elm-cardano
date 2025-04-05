@@ -46,7 +46,7 @@ jobs:
             - uses: actions/checkout@v4
 
             - name: Download the uplc-wasm archive
-              run: curl -LO 'https://github.com/mpizenberg/uplc-wasm/releases/download/v0.3.0/my-artifact.zip'
+              run: curl -LO 'https://github.com/mpizenberg/uplc-wasm/releases/download/v0.3.1/my-artifact.zip'
             - run: unzip my-artifact.zip -d cli/pkg-uplc-wasm
 
             - name: Install Rust toolchain

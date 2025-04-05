@@ -2,7 +2,7 @@ module Bytes.Comparable exposing
     ( Bytes
     , Any, toAny
     , concat, chunksOf, width, isEmpty
-    , fromBytes, fromHex, fromHexUnchecked, fromText, fromU8
+    , empty, fromBytes, fromHex, fromHexUnchecked, fromText, fromU8
     , toBytes, toHex, toText, toCbor, toU8
     , jsonEncode, jsonDecoder
     , blake2b224, blake2b256, blake2b512
@@ -18,7 +18,7 @@ module Bytes.Comparable exposing
 @docs Bytes
 @docs Any, toAny
 @docs concat, chunksOf, width, isEmpty
-@docs fromBytes, fromHex, fromHexUnchecked, fromText, fromU8
+@docs empty, fromBytes, fromHex, fromHexUnchecked, fromText, fromU8
 @docs toBytes, toHex, toText, toCbor, toU8
 @docs jsonEncode, jsonDecoder
 @docs blake2b224, blake2b256, blake2b512
@@ -78,6 +78,13 @@ isEmpty (Bytes str) =
 width : Bytes a -> Int
 width (Bytes str) =
     String.length str // 2
+
+
+{-| Create an empty Bytes object.
+-}
+empty : Bytes a
+empty =
+    fromHexUnchecked ""
 
 
 {-| Create a [Bytes] object from a hex-encoded string.
