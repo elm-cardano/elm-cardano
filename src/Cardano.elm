@@ -1,5 +1,5 @@
 module Cardano exposing
-    ( TxIntent(..), SpendSource(..), ScriptWitness(..), NativeScriptWitness, PlutusScriptWitness, WitnessSource(..), TxContext
+    ( TxIntent(..), SpendSource(..), ScriptWitness(..), NativeScriptWitness, PlutusScriptWitness, WitnessSource(..), mapSource, TxContext
     , CertificateIntent(..), CredentialWitness(..), VoterWitness(..)
     , VoteIntent, ProposalIntent, ActionProposal(..)
     , TxOtherInfo(..)
@@ -374,7 +374,7 @@ We can embed it directly in the transaction witness.
 
 ## Code Documentation
 
-@docs TxIntent, SpendSource, ScriptWitness, NativeScriptWitness, PlutusScriptWitness, WitnessSource, TxContext
+@docs TxIntent, SpendSource, ScriptWitness, NativeScriptWitness, PlutusScriptWitness, WitnessSource, mapSource, TxContext
 @docs CertificateIntent, CredentialWitness, VoterWitness
 @docs VoteIntent, ProposalIntent, ActionProposal
 @docs TxOtherInfo
@@ -440,9 +440,6 @@ type TxIntent
 
 
 {-| Represents different sources for spending assets.
-
-TODO: check that output references match the type of source (script VS not script)
-
 -}
 type SpendSource
     = FromWallet
@@ -452,7 +449,7 @@ type SpendSource
         }
     | FromNativeScript
         { spentInput : OutputReference
-        , nativeScriptWitness : WitnessSource NativeScript
+        , nativeScriptWitness : NativeScriptWitness
         }
     | FromPlutusScript
         { spentInput : OutputReference
@@ -520,8 +517,15 @@ type ScriptWitness
 
 
 {-| Represents a Native script witness.
+
 Expected signatures are not put in the "required\_signers" field of the Tx
 but are still used to estimate fees.
+
+If you expect to sign with all credentials present in the multisig,
+you can use `Dict.values (Cardano.Script.extractSigners script)`.
+
+Otherwise, just list the credentials you intend to sign with.
+
 -}
 type alias NativeScriptWitness =
     { script : WitnessSource NativeScript
@@ -543,6 +547,18 @@ type alias PlutusScriptWitness =
 type WitnessSource a
     = WitnessByValue a
     | WitnessByReference OutputReference
+
+
+{-| Map a function over a witness source (if by value).
+-}
+mapSource : (a -> b) -> WitnessSource a -> WitnessSource b
+mapSource f witnessSource =
+    case witnessSource of
+        WitnessByValue value ->
+            WitnessByValue (f value)
+
+        WitnessByReference ref ->
+            WitnessByReference ref
 
 
 {-| Extract the [OutputReference] from a witness source,
@@ -1333,7 +1349,8 @@ preProcessIntents txIntents =
                 Spend (FromNativeScript { spentInput, nativeScriptWitness }) ->
                     { preProcessedIntents
                         | preSelected = { input = spentInput, redeemer = Nothing } :: preProcessedIntents.preSelected
-                        , nativeScriptSources = nativeScriptWitness :: preProcessedIntents.nativeScriptSources
+                        , nativeScriptSources = nativeScriptWitness.script :: preProcessedIntents.nativeScriptSources
+                        , expectedSigners = nativeScriptWitness.expectedSigners :: preProcessedIntents.expectedSigners
                     }
 
                 Spend (FromPlutusScript { spentInput, datumWitness, plutusScriptWitness }) ->
@@ -1961,19 +1978,25 @@ checkWalletSpending localStateUtxos { address, guaranteedUtxos } =
             )
 
 
-checkNativeScriptSpending : Utxo.RefDict Output -> Output -> WitnessSource NativeScript -> Result TxFinalizationError ()
+checkNativeScriptSpending : Utxo.RefDict Output -> Output -> NativeScriptWitness -> Result TxFinalizationError ()
 checkNativeScriptSpending localStateUtxos spentInput nativeScriptWitness =
     checkScriptAddress spentInput.address
         |> Result.andThen
-            (\scriptHash ->
-                case nativeScriptWitness of
-                    WitnessByValue nativeScript ->
-                        checkScriptMatch { expected = scriptHash, witness = Script.hash (Script.Native nativeScript) }
+            (\scriptHash -> checkNativeScriptWitness localStateUtxos scriptHash nativeScriptWitness)
 
-                    WitnessByReference outputRef ->
-                        getRefScript localStateUtxos outputRef
-                            |> Result.andThen (\refScript -> checkScriptMatch { expected = scriptHash, witness = Script.refHash refScript })
-            )
+
+checkNativeScriptWitness : Utxo.RefDict Output -> Bytes CredentialHash -> NativeScriptWitness -> Result TxFinalizationError ()
+checkNativeScriptWitness localStateUtxos expectedHash { script } =
+    -- TODO: also check NativeScriptWitness.expectedSigners
+    -- We could check that they exist native script.
+    -- We could even reproduce the logic to verify they would evaluate to True (except for time).
+    case script of
+        WitnessByValue nativeScript ->
+            checkScriptMatch { expected = expectedHash, witness = Script.hash <| Script.Native nativeScript }
+
+        WitnessByReference outputRef ->
+            getRefScript localStateUtxos outputRef
+                |> Result.andThen (\refScript -> checkScriptMatch { expected = expectedHash, witness = Script.refHash refScript })
 
 
 {-| Check that the datum witness matches the output datum option.

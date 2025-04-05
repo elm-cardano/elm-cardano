@@ -1172,7 +1172,10 @@ failTxBuilding =
                 [ Spend <|
                     FromNativeScript
                         { spentInput = utxoBeingSpent
-                        , nativeScriptWitness = WitnessByValue wrongScript
+                        , nativeScriptWitness =
+                            { script = WitnessByValue wrongScript
+                            , expectedSigners = []
+                            }
                         }
                 , SendTo testAddr.me (Value.onlyLovelace <| ada 4)
                 ]
@@ -1228,7 +1231,10 @@ failTxBuilding =
                 [ Spend <|
                     FromNativeScript
                         { spentInput = utxoBeingSpent
-                        , nativeScriptWitness = WitnessByReference utxoWithScriptRef
+                        , nativeScriptWitness =
+                            { script = WitnessByReference utxoWithScriptRef
+                            , expectedSigners = []
+                            }
                         }
                 , SendTo testAddr.me (Value.onlyLovelace <| ada 4)
                 ]
@@ -1278,7 +1284,10 @@ failTxBuilding =
                 [ Spend <|
                     FromNativeScript
                         { spentInput = utxoBeingSpent
-                        , nativeScriptWitness = WitnessByReference utxoWithoutScriptRef
+                        , nativeScriptWitness =
+                            { script = WitnessByReference utxoWithoutScriptRef
+                            , expectedSigners = []
+                            }
                         }
                 , SendTo testAddr.me (Value.onlyLovelace <| ada 4)
                 ]
