@@ -108,7 +108,7 @@ To build successfully, it attempts to statically load the WASM files for Aiken U
 So we first need to download these files locally, then we can compile (in release).
 ```sh
 # Download the uplc-wasm archive
-curl -LO 'https://github.com/mpizenberg/uplc-wasm/releases/download/v0.3.0/my-artifact.zip'
+curl -LO 'https://github.com/mpizenberg/uplc-wasm/releases/download/v0.3.1/my-artifact.zip'
 unzip my-artifact.zip -d cli/pkg-uplc-wasm
 
 # Build the elm-cardano cli
