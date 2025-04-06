@@ -737,7 +737,8 @@ type TxFinalizationError
     | ReferenceOutputsMissingFromLocalState (List OutputReference)
     | MissingReferenceScript OutputReference
     | InvalidScriptRef OutputReference (Bytes Script) String
-    | InvalidWalletAddress Address String
+    | InvalidAddress Address String
+    | InvalidStakeAddress StakeAddress String
     | ScriptHashMismatch { expected : Bytes CredentialHash, witness : Bytes CredentialHash } String
     | ExtraneousDatumWitness (WitnessSource Data) String
     | MissingDatumWitness (Bytes Utxo.DatumHash) String
@@ -1735,6 +1736,19 @@ processIntents govState localStateUtxos txIntents =
                                     Nothing
                         )
 
+            withdrawals : List ( StakeAddress, Maybe ScriptWitness )
+            withdrawals =
+                txIntents
+                    |> List.filterMap
+                        (\intent ->
+                            case intent of
+                                WithdrawRewards { stakeCredential, scriptWitness } ->
+                                    Just ( stakeCredential, scriptWitness )
+
+                                _ ->
+                                    Nothing
+                        )
+
             totalMintedAndBurned : MultiAsset Integer
             totalMintedAndBurned =
                 List.map (\m -> Map.singleton m.policyId m.assets) preProcessedIntents.mints
@@ -1763,6 +1777,7 @@ processIntents govState localStateUtxos txIntents =
         validMinAdaPerOutput preCreatedOutputs.outputs
             |> Result.mapError NotEnoughMinAda
             |> Result.andThen (\_ -> validateSpentOutputs localStateUtxos spendings)
+            |> Result.andThen (\_ -> validateWithdrawals localStateUtxos withdrawals)
             |> Result.map
                 (\_ ->
                     let
@@ -1925,6 +1940,43 @@ validMinAdaPerOutput outputs =
                     Err err
 
 
+{-| Do as many checks as we can on user-provided withdrawals.
+-}
+validateWithdrawals : Utxo.RefDict Output -> List ( StakeAddress, Maybe ScriptWitness ) -> Result TxFinalizationError ()
+validateWithdrawals localStateUtxos withdrawals =
+    List.map (checkWithdrawal localStateUtxos) withdrawals
+        |> Result.Extra.combine
+        |> Result.map (\_ -> ())
+
+
+{-| Do as many checks as we can on user-provided withdrawals.
+
+We can check things like:
+
+  - check address is of correct type (key/script)
+  - check script witness (same hash, ...)
+  - check datum witness (same hash, ...)
+
+-}
+checkWithdrawal : Utxo.RefDict Output -> ( StakeAddress, Maybe ScriptWitness ) -> Result TxFinalizationError ()
+checkWithdrawal localStateUtxos ( stakeAddress, maybeWitness ) =
+    case ( stakeAddress.stakeCredential, maybeWitness ) of
+        ( VKeyHash _, Nothing ) ->
+            Ok ()
+
+        ( ScriptHash scriptHash, Just (NativeWitness nativeScriptWitness) ) ->
+            checkNativeScriptWitness localStateUtxos scriptHash nativeScriptWitness
+
+        ( ScriptHash scriptHash, Just (PlutusWitness plutusScriptWitness) ) ->
+            checkPlutusScriptWitness localStateUtxos scriptHash plutusScriptWitness
+
+        ( VKeyHash _, Just _ ) ->
+            Err <| InvalidStakeAddress stakeAddress "You are providing a script witness, but this stake address is for a public key withdrawal, not a script"
+
+        ( ScriptHash _, Nothing ) ->
+            Err <| InvalidStakeAddress stakeAddress "This stake address is for a script, but you didn’t provide a script witness for the withdrawal"
+
+
 {-| Do as many checks as we can on user-provided spendings.
 -}
 validateSpentOutputs : Utxo.RefDict Output -> List SpendSource -> Result TxFinalizationError ()
@@ -1967,9 +2019,9 @@ checkWalletSpending localStateUtxos { address, guaranteedUtxos } =
     let
         checkRefAddressIsKey ref =
             getUtxo localStateUtxos ref
-                |> Result.andThen (\output -> checkKeyAddress output.address)
+                |> Result.andThen (\output -> checkKeyAddressSpending output.address)
     in
-    checkKeyAddress address
+    checkKeyAddressSpending address
         |> Result.andThen
             (\_ ->
                 List.map checkRefAddressIsKey guaranteedUtxos
@@ -1980,7 +2032,7 @@ checkWalletSpending localStateUtxos { address, guaranteedUtxos } =
 
 checkNativeScriptSpending : Utxo.RefDict Output -> Output -> NativeScriptWitness -> Result TxFinalizationError ()
 checkNativeScriptSpending localStateUtxos spentInput nativeScriptWitness =
-    checkScriptAddress spentInput.address
+    checkScriptAddressSpending spentInput.address
         |> Result.andThen
             (\scriptHash -> checkNativeScriptWitness localStateUtxos scriptHash nativeScriptWitness)
 
@@ -2051,41 +2103,44 @@ checkDatumWitness localStateUtxos maybeDatumOption maybeDatumWitness =
 
 checkPlutusScriptSpending : Utxo.RefDict Output -> Output -> PlutusScriptWitness -> Result TxFinalizationError ()
 checkPlutusScriptSpending localStateUtxos spentInput plutusScriptWitness =
-    checkScriptAddress spentInput.address
+    checkScriptAddressSpending spentInput.address
         |> Result.andThen
-            (\scriptHash ->
-                let
-                    ( version, witnessSource ) =
-                        plutusScriptWitness.script
-                in
-                case witnessSource of
-                    WitnessByValue scriptBytes ->
-                        let
-                            computedScriptHash =
-                                Script.plutusScriptFromBytes version scriptBytes
-                                    |> Script.Plutus
-                                    |> Script.hash
-                        in
-                        checkScriptMatch { expected = scriptHash, witness = computedScriptHash }
+            (\expectedHash -> checkPlutusScriptWitness localStateUtxos expectedHash plutusScriptWitness)
 
-                    WitnessByReference outputRef ->
-                        let
-                            checkValidScript scriptRef =
-                                let
-                                    scriptBytes =
-                                        Script.refBytes scriptRef
-                                in
-                                case D.decode Script.fromCbor (Bytes.toBytes scriptBytes) of
-                                    Just _ ->
-                                        Ok scriptRef
 
-                                    Nothing ->
-                                        Err <| InvalidScriptRef outputRef scriptBytes "UTxO contains an invalid reference script (bytes cannot be decoded into an actual script)"
-                        in
-                        getRefScript localStateUtxos outputRef
-                            |> Result.andThen checkValidScript
-                            |> Result.andThen (\scriptRef -> checkScriptMatch { expected = scriptHash, witness = Script.refHash scriptRef })
-            )
+checkPlutusScriptWitness : Utxo.RefDict Output -> Bytes CredentialHash -> PlutusScriptWitness -> Result TxFinalizationError ()
+checkPlutusScriptWitness localStateUtxos expectedHash plutusScriptWitness =
+    let
+        ( version, witnessSource ) =
+            plutusScriptWitness.script
+    in
+    case witnessSource of
+        WitnessByValue scriptBytes ->
+            let
+                computedScriptHash =
+                    Script.plutusScriptFromBytes version scriptBytes
+                        |> Script.Plutus
+                        |> Script.hash
+            in
+            checkScriptMatch { expected = expectedHash, witness = computedScriptHash }
+
+        WitnessByReference outputRef ->
+            let
+                checkValidScript scriptRef =
+                    let
+                        scriptBytes =
+                            Script.refBytes scriptRef
+                    in
+                    case D.decode Script.fromCbor (Bytes.toBytes scriptBytes) of
+                        Just _ ->
+                            Ok scriptRef
+
+                        Nothing ->
+                            Err <| InvalidScriptRef outputRef scriptBytes "UTxO contains an invalid reference script (bytes cannot be decoded into an actual script)"
+            in
+            getRefScript localStateUtxos outputRef
+                |> Result.andThen checkValidScript
+                |> Result.andThen (\scriptRef -> checkScriptMatch { expected = expectedHash, witness = Script.refHash scriptRef })
 
 
 checkScriptMatch : { expected : Bytes CredentialHash, witness : Bytes CredentialHash } -> Result TxFinalizationError ()
@@ -2109,38 +2164,38 @@ getUtxo utxos ref =
         |> Result.fromMaybe (ReferenceOutputsMissingFromLocalState [ ref ])
 
 
-checkAddress : Address -> (Credential -> Result TxFinalizationError a) -> Result TxFinalizationError a
-checkAddress address credentialValidator =
+checkAddressSpending : Address -> (Credential -> Result TxFinalizationError a) -> Result TxFinalizationError a
+checkAddressSpending address credentialValidator =
     case address of
         Byron _ ->
-            Err <| InvalidWalletAddress address "Byron addresses not supported"
+            Err <| InvalidAddress address "Byron addresses not supported"
 
         Reward _ ->
-            Err <| InvalidWalletAddress address "Reward address cannot be spent"
+            Err <| InvalidAddress address "Reward address cannot be spent"
 
         Shelley { paymentCredential } ->
             credentialValidator paymentCredential
 
 
-checkKeyAddress : Address -> Result TxFinalizationError ()
-checkKeyAddress address =
-    checkAddress address <|
+checkKeyAddressSpending : Address -> Result TxFinalizationError ()
+checkKeyAddressSpending address =
+    checkAddressSpending address <|
         \credential ->
             case credential of
                 VKeyHash _ ->
                     Ok ()
 
                 ScriptHash _ ->
-                    Err <| InvalidWalletAddress address "This is a script address, not a regular wallet key address"
+                    Err <| InvalidAddress address "This is a script address, not a regular wallet key address"
 
 
-checkScriptAddress : Address -> Result TxFinalizationError (Bytes CredentialHash)
-checkScriptAddress address =
-    checkAddress address <|
+checkScriptAddressSpending : Address -> Result TxFinalizationError (Bytes CredentialHash)
+checkScriptAddressSpending address =
+    checkAddressSpending address <|
         \credential ->
             case credential of
                 VKeyHash _ ->
-                    Err <| InvalidWalletAddress address "This is a regular wallet key address, not a script address"
+                    Err <| InvalidAddress address "This is a regular wallet key address, not a script address"
 
                 ScriptHash scriptHash ->
                     Ok scriptHash
