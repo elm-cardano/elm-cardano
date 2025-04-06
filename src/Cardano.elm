@@ -402,8 +402,8 @@ import Cardano.Uplc as Uplc
 import Cardano.Utils exposing (UnitInterval)
 import Cardano.Utxo as Utxo exposing (DatumOption(..), Output, OutputReference, TransactionId)
 import Cardano.Value as Value exposing (Value)
-import Cbor.Decode as D
 import Cbor.Encode as E
+import Dict
 import Dict.Any exposing (AnyDict)
 import Integer exposing (Integer)
 import List.Extra
@@ -739,6 +739,7 @@ type TxFinalizationError
     | InvalidScriptRef OutputReference (Bytes Script) String
     | InvalidAddress Address String
     | InvalidStakeAddress StakeAddress String
+    | InvalidExpectedSigners { scriptHash : Bytes CredentialHash } String
     | ScriptHashMismatch { expected : Bytes CredentialHash, witness : Bytes CredentialHash } String
     | ExtraneousDatumWitness (WitnessSource Data) String
     | MissingDatumWitness (Bytes Utxo.DatumHash) String
@@ -2037,18 +2038,60 @@ checkNativeScriptSpending localStateUtxos spentInput nativeScriptWitness =
             (\scriptHash -> checkNativeScriptWitness localStateUtxos scriptHash nativeScriptWitness)
 
 
+{-| Check the witness of a native script. Both the script hash and the validity of expected signers.
+-}
 checkNativeScriptWitness : Utxo.RefDict Output -> Bytes CredentialHash -> NativeScriptWitness -> Result TxFinalizationError ()
-checkNativeScriptWitness localStateUtxos expectedHash { script } =
-    -- TODO: also check NativeScriptWitness.expectedSigners
-    -- We could check that they exist native script.
-    -- We could even reproduce the logic to verify they would evaluate to True (except for time).
+checkNativeScriptWitness localStateUtxos expectedHash { script, expectedSigners } =
+    let
+        checkSigners nativeScript _ =
+            checkExpectedSigners expectedSigners nativeScript
+                |> Result.mapError (InvalidExpectedSigners { scriptHash = expectedHash })
+    in
     case script of
         WitnessByValue nativeScript ->
             checkScriptMatch { expected = expectedHash, witness = Script.hash <| Script.Native nativeScript }
+                |> Result.andThen (checkSigners nativeScript)
 
         WitnessByReference outputRef ->
             getRefScript localStateUtxos outputRef
-                |> Result.andThen (\refScript -> checkScriptMatch { expected = expectedHash, witness = Script.refHash refScript })
+                |> Result.andThen
+                    (\scriptRef ->
+                        case Script.refScript scriptRef of
+                            Nothing ->
+                                Err <| InvalidScriptRef outputRef (Script.refBytes scriptRef) "UTxO contains an invalid reference script (bytes cannot be decoded into an actual script)"
+
+                            Just (Script.Plutus _) ->
+                                Err <| InvalidScriptRef outputRef (Script.refBytes scriptRef) "UTxO reference contains a Plutus script instead of a native script"
+
+                            Just (Script.Native nativeScript) ->
+                                checkScriptMatch { expected = expectedHash, witness = Script.refHash scriptRef }
+                                    |> Result.andThen (checkSigners nativeScript)
+                    )
+
+
+checkExpectedSigners : List (Bytes CredentialHash) -> NativeScript -> Result String ()
+checkExpectedSigners expected nativeScript =
+    let
+        expectedDict =
+            Dict.fromList (List.map (\x -> ( Bytes.toHex x, x )) expected)
+
+        signersInScript =
+            Script.extractSigners nativeScript
+
+        signersNotInScript =
+            Dict.diff expectedDict signersInScript
+    in
+    if Dict.isEmpty signersNotInScript then
+        if Script.isMultisigSatisfied expected nativeScript then
+            Ok ()
+
+        else
+            Err "Native multisig not satisfied"
+
+    else
+        Err <|
+            "These signers in the expected list, are not part of the multisig: "
+                ++ String.join ", " (Dict.keys signersNotInScript)
 
 
 {-| Check that the datum witness matches the output datum option.
@@ -2127,16 +2170,12 @@ checkPlutusScriptWitness localStateUtxos expectedHash plutusScriptWitness =
         WitnessByReference outputRef ->
             let
                 checkValidScript scriptRef =
-                    let
-                        scriptBytes =
-                            Script.refBytes scriptRef
-                    in
-                    case D.decode Script.fromCbor (Bytes.toBytes scriptBytes) of
+                    case Script.refScript scriptRef of
                         Just _ ->
                             Ok scriptRef
 
                         Nothing ->
-                            Err <| InvalidScriptRef outputRef scriptBytes "UTxO contains an invalid reference script (bytes cannot be decoded into an actual script)"
+                            Err <| InvalidScriptRef outputRef (Script.refBytes scriptRef) "UTxO contains an invalid reference script (bytes cannot be decoded into an actual script)"
             in
             getRefScript localStateUtxos outputRef
                 |> Result.andThen checkValidScript
