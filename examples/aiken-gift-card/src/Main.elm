@@ -3,13 +3,13 @@ port module Main exposing (..)
 import Browser
 import Bytes.Comparable as Bytes exposing (Bytes)
 import Bytes.Map as BytesMap
-import Cardano exposing (SpendSource(..), TxIntent(..))
 import Cardano.Address as Address exposing (Address, Credential(..), CredentialHash, NetworkId(..))
 import Cardano.Cip30 as Cip30
 import Cardano.Data as Data
 import Cardano.MultiAsset exposing (AssetName)
 import Cardano.Script as Script exposing (PlutusVersion(..), ScriptCbor)
 import Cardano.Transaction as Tx exposing (Transaction)
+import Cardano.TxIntent as TxIntent exposing (SpendSource(..), TxIntent(..))
 import Cardano.Uplc as Uplc
 import Cardano.Utxo as Utxo exposing (DatumOption(..), Output, OutputReference, TransactionId, outputReferenceToData)
 import Cardano.Value
@@ -200,7 +200,7 @@ update msg model =
                     let
                         -- Update the known UTxOs set after the given Tx is processed
                         { updatedState, spent, created } =
-                            Cardano.updateLocalState txId tx ctx.localStateUtxos
+                            TxIntent.updateLocalState txId tx ctx.localStateUtxos
 
                         -- Also update specifically our wallet UTxOs knowledge
                         -- This isn’t purely necessary, but just to keep a consistent wallet state
@@ -425,7 +425,7 @@ finalizeTx ctx mPrevTxId intents =
 
         txAttempt =
             intents
-                |> Cardano.finalize ctx.localStateUtxos []
+                |> TxIntent.finalize ctx.localStateUtxos []
     in
     case txAttempt of
         Ok { tx } ->

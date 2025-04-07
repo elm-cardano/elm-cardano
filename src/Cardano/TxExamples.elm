@@ -13,7 +13,6 @@ module Cardano.TxExamples exposing
 
 import Bytes.Comparable as Bytes exposing (Bytes)
 import Bytes.Map as Map
-import Cardano exposing (ActionProposal(..), CertificateIntent(..), Fee(..), SpendSource(..), TxIntent(..), TxOtherInfo(..), finalize, finalizeAdvanced)
 import Cardano.Address as Address exposing (Address(..), Credential(..), CredentialHash, NetworkId(..), StakeAddress, StakeCredential(..))
 import Cardano.CoinSelection as CoinSelection
 import Cardano.Data as Data
@@ -23,6 +22,7 @@ import Cardano.MultiAsset as MultiAsset
 import Cardano.Redeemer as Redeemer exposing (ExUnitPrices, ExUnits)
 import Cardano.Script as Script exposing (NativeScript(..), PlutusVersion(..))
 import Cardano.Transaction as Transaction exposing (Certificate(..), Transaction)
+import Cardano.TxIntent exposing (ActionProposal(..), CertificateIntent(..), Fee(..), SpendSource(..), TxIntent(..), TxOtherInfo(..), finalize, finalizeAdvanced)
 import Cardano.Uplc as Uplc
 import Cardano.Utils exposing (RationalNumber)
 import Cardano.Utxo as Utxo exposing (Output, OutputReference)

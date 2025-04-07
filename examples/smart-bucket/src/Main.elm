@@ -2,13 +2,13 @@ port module Main exposing (..)
 
 import Browser
 import Bytes.Comparable as Bytes exposing (Bytes)
-import Cardano exposing (SpendSource(..), TxIntent(..))
 import Cardano.Address as Address exposing (Address, Credential(..), CredentialHash, NetworkId(..))
 import Cardano.Cip30 as Cip30
 import Cardano.Data as Data
 import Cardano.MultiAsset exposing (AssetName)
 import Cardano.Script exposing (PlutusVersion(..), ScriptCbor)
 import Cardano.Transaction as Tx exposing (Transaction)
+import Cardano.TxIntent as TxIntent exposing (SpendSource(..), TxIntent(..))
 import Cardano.Utxo as Utxo exposing (DatumOption(..), Output, OutputReference, TransactionId)
 import Cardano.Value as Value
 import Cardano.Witness as Witness
@@ -155,7 +155,7 @@ update msg model =
                     let
                         -- Update the known UTxOs set after the given Tx is processed
                         { updatedState, spent, created } =
-                            Cardano.updateLocalState txId tx ctx.localStateUtxos
+                            TxIntent.updateLocalState txId tx ctx.localStateUtxos
 
                         -- Also update specifically our wallet UTxOs knowledge
                         -- This isn’t purely necessary, but just to keep a consistent wallet state
@@ -347,7 +347,7 @@ update msg model =
                     , Spend <| FromWallet { address = ctx.loadedWallet.changeAddress, value = bucketValueIncrease, guaranteedUtxos = [] }
                     , SendToOutputAdvanced outputBucket
                     ]
-                        |> Cardano.finalize ctx.localStateUtxos []
+                        |> TxIntent.finalize ctx.localStateUtxos []
             in
             case reuseBucketTxAttempt of
                 Ok { tx } ->
@@ -389,7 +389,7 @@ createBucket ({ localStateUtxos, myKeyCred, scriptAddress, loadedWallet, lockScr
                 , referenceScript = Nothing
                 }
             ]
-                |> Cardano.finalize localStateUtxos []
+                |> TxIntent.finalize localStateUtxos []
     in
     case createBucketTxAttempt of
         Ok { tx } ->
