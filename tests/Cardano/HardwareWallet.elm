@@ -2,13 +2,14 @@ module Cardano.HardwareWallet exposing (suite)
 
 import Bytes.Comparable as Bytes exposing (Bytes)
 import Bytes.Map exposing (BytesMap)
-import Cardano exposing (SpendSource(..), TxIntent(..), WitnessSource(..), finalize)
+import Cardano exposing (SpendSource(..), TxIntent(..), finalize)
 import Cardano.Address as Address exposing (Address, Credential(..), CredentialHash, NetworkId(..), StakeCredential(..))
 import Cardano.Data as Data
 import Cardano.Script as Script exposing (PlutusVersion(..))
 import Cardano.Transaction as Transaction exposing (Certificate(..), newBody, newWitnessSet)
 import Cardano.Utxo as Utxo exposing (Output, OutputReference)
 import Cardano.Value as Value
+import Cardano.Witness as Witness
 import Dict exposing (Dict)
 import Dict.Any
 import Expect
@@ -241,7 +242,7 @@ suite =
                                 { spentInput = utxoBeingSpent
                                 , datumWitness = Nothing
                                 , plutusScriptWitness =
-                                    { script = ( Script.plutusVersion lock.script, WitnessByValue <| Script.cborWrappedBytes lock.script )
+                                    { script = ( Script.plutusVersion lock.script, Witness.ByValue <| Script.cborWrappedBytes lock.script )
                                     , redeemerData = redeemer
                                     , requiredSigners = [ myKeyCred ]
                                     }

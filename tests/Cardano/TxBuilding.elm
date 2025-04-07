@@ -2,7 +2,7 @@ module Cardano.TxBuilding exposing (suite)
 
 import Bytes.Comparable as Bytes exposing (Bytes)
 import Bytes.Map as Map
-import Cardano exposing (ActionProposal(..), CertificateIntent(..), CredentialWitness(..), Fee(..), GovernanceState, ScriptWitness(..), SpendSource(..), TxFinalizationError(..), TxFinalized, TxIntent(..), TxOtherInfo(..), VoterWitness(..), WitnessSource(..), finalizeAdvanced)
+import Cardano exposing (ActionProposal(..), CertificateIntent(..), Fee(..), GovernanceState, SpendSource(..), TxFinalizationError(..), TxFinalized, TxIntent(..), TxOtherInfo(..), finalizeAdvanced)
 import Cardano.Address as Address exposing (Address, Credential(..), CredentialHash, NetworkId(..), StakeCredential(..))
 import Cardano.CoinSelection as CoinSelection exposing (Error(..))
 import Cardano.Data as Data
@@ -15,6 +15,7 @@ import Cardano.Transaction as Transaction exposing (Certificate(..), Transaction
 import Cardano.Uplc as Uplc
 import Cardano.Utxo as Utxo exposing (DatumOption(..), Output, OutputReference)
 import Cardano.Value as Value exposing (Value)
+import Cardano.Witness as Witness exposing (Credential(..), Error(..), Voter(..))
 import Expect exposing (Expectation)
 import Integer
 import Natural exposing (Natural)
@@ -281,7 +282,7 @@ okTxBuilding =
                 [ MintBurn
                     { policyId = dog.policyId
                     , assets = Map.singleton dog.assetName Integer.one
-                    , scriptWitness = NativeWitness { script = WitnessByReference dog.scriptRef, expectedSigners = [] }
+                    , scriptWitness = Witness.Native { script = Witness.ByReference dog.scriptRef, expectedSigners = [] }
                     }
                 , SendTo testAddr.me (Value.onlyToken dog.policyId dog.assetName Natural.one)
 
@@ -295,7 +296,7 @@ okTxBuilding =
                 , MintBurn
                     { policyId = cat.policyId
                     , assets = Map.singleton cat.assetName Integer.negativeOne
-                    , scriptWitness = NativeWitness { script = WitnessByReference cat.scriptRef, expectedSigners = [] }
+                    , scriptWitness = Witness.Native { script = Witness.ByReference cat.scriptRef, expectedSigners = [] }
                     }
                 ]
             }
@@ -401,7 +402,7 @@ okTxBuilding =
                         { spentInput = utxoBeingSpent
                         , datumWitness = Nothing
                         , plutusScriptWitness =
-                            { script = ( PlutusV3, WitnessByValue lock.scriptBytes )
+                            { script = ( PlutusV3, Witness.ByValue lock.scriptBytes )
                             , redeemerData = redeemer
                             , requiredSigners = [ myKeyCred ]
                             }
@@ -532,7 +533,7 @@ okTxBuilding =
                     Just
                         { policyId = Bytes.fromHexUnchecked "fa24fb305126805cf2164c161d852a0e7330cf988f1fe558cf7d4a64"
                         , plutusVersion = PlutusV3
-                        , scriptWitness = WitnessByValue guardrailsScriptBytes
+                        , scriptWitness = Witness.ByValue guardrailsScriptBytes
                         }
                 , lastEnactedCommitteeAction = Nothing
                 , lastEnactedConstitutionAction = Nothing
@@ -682,7 +683,7 @@ okTxBuilding =
                 WithPoolCred (dummyCredentialHash "poolId")
 
             withMyDrepScript =
-                WithDrepCred (WithScript drepScriptHash <| NativeWitness { script = WitnessByValue drepScript, expectedSigners = [] })
+                WithDrepCred (WithScript drepScriptHash <| Witness.Native { script = Witness.ByValue drepScript, expectedSigners = [] })
           in
           okTxTest "Test with multiple votes"
             { govState = Cardano.emptyGovernanceState
@@ -760,7 +761,7 @@ okTxBuilding =
                 [ MintBurn
                     { policyId = indexedScript.hash
                     , assets = Map.singleton Bytes.empty Integer.one
-                    , scriptWitness = PlutusWitness <| indexedScript.witness redeemer
+                    , scriptWitness = Witness.Plutus <| indexedScript.witness redeemer
                     }
                 , SendTo testAddr.me <|
                     Value.onlyToken indexedScript.hash Bytes.empty Natural.one
@@ -773,7 +774,7 @@ okTxBuilding =
                         , stakeCredential = ScriptHash indexedScript.hash
                         }
                     , amount = Natural.zero
-                    , scriptWitness = Just <| PlutusWitness <| indexedScript.witness redeemer
+                    , scriptWitness = Just <| Witness.Plutus <| indexedScript.witness redeemer
                     }
                 ]
 
@@ -782,7 +783,7 @@ okTxBuilding =
                     RegisterStake
                         { delegator =
                             WithScript indexedScript.hash <|
-                                PlutusWitness (indexedScript.witness redeemer)
+                                Witness.Plutus (indexedScript.witness redeemer)
                         , deposit = Natural.zero
                         }
                 ]
@@ -792,7 +793,7 @@ okTxBuilding =
                     voter =
                         WithDrepCred <|
                             WithScript indexedScript.hash <|
-                                PlutusWitness (indexedScript.witness redeemer)
+                                Witness.Plutus (indexedScript.witness redeemer)
 
                     dummyVote =
                         { actionId =
@@ -927,7 +928,7 @@ failTxBuilding =
             }
             (\error ->
                 case error of
-                    ReferenceOutputsMissingFromLocalState [ ref ] ->
+                    WitnessError (Witness.ReferenceOutputsMissingFromLocalState [ ref ]) ->
                         Expect.equal ref (makeRef "0" 0)
 
                     _ ->
@@ -1120,7 +1121,7 @@ failTxBuilding =
                         { spentInput = utxoBeingSpent
                         , datumWitness = Nothing
                         , plutusScriptWitness =
-                            { script = ( PlutusV3, WitnessByValue lock.scriptBytes )
+                            { script = ( PlutusV3, Witness.ByValue lock.scriptBytes )
                             , redeemerData = redeemer
                             , requiredSigners = [ myKeyCred ]
                             }
@@ -1173,7 +1174,7 @@ failTxBuilding =
                     FromNativeScript
                         { spentInput = utxoBeingSpent
                         , nativeScriptWitness =
-                            { script = WitnessByValue wrongScript
+                            { script = Witness.ByValue wrongScript
                             , expectedSigners = []
                             }
                         }
@@ -1182,7 +1183,7 @@ failTxBuilding =
             }
             (\error ->
                 case error of
-                    ScriptHashMismatch _ _ ->
+                    WitnessError (Witness.ScriptHashMismatch _ _) ->
                         Expect.pass
 
                     _ ->
@@ -1232,7 +1233,7 @@ failTxBuilding =
                     FromNativeScript
                         { spentInput = utxoBeingSpent
                         , nativeScriptWitness =
-                            { script = WitnessByReference utxoWithScriptRef
+                            { script = Witness.ByReference utxoWithScriptRef
                             , expectedSigners = []
                             }
                         }
@@ -1241,7 +1242,7 @@ failTxBuilding =
             }
             (\error ->
                 case error of
-                    ScriptHashMismatch _ _ ->
+                    WitnessError (Witness.ScriptHashMismatch _ _) ->
                         Expect.pass
 
                     _ ->
@@ -1285,7 +1286,7 @@ failTxBuilding =
                     FromNativeScript
                         { spentInput = utxoBeingSpent
                         , nativeScriptWitness =
-                            { script = WitnessByReference utxoWithoutScriptRef
+                            { script = Witness.ByReference utxoWithoutScriptRef
                             , expectedSigners = []
                             }
                         }
@@ -1294,7 +1295,7 @@ failTxBuilding =
             }
             (\error ->
                 case error of
-                    MissingReferenceScript _ ->
+                    WitnessError (Witness.MissingReferenceScript _) ->
                         Expect.pass
 
                     _ ->
@@ -1307,7 +1308,7 @@ failTxBuilding =
                 Script.plutusScriptFromBytes PlutusV3 <| Bytes.fromHexUnchecked ""
 
             wrongScript =
-                ( PlutusV2, WitnessByValue <| Bytes.fromHexUnchecked "" )
+                ( PlutusV2, Witness.ByValue <| Bytes.fromHexUnchecked "" )
 
             utxoBeingSpent =
                 makeRef "previouslySentToLock" 0
@@ -1345,7 +1346,7 @@ failTxBuilding =
             }
             (\error ->
                 case error of
-                    ScriptHashMismatch _ _ ->
+                    WitnessError (Witness.ScriptHashMismatch _ _) ->
                         Expect.pass
 
                     _ ->
@@ -1358,10 +1359,10 @@ failTxBuilding =
                 Script.plutusScriptFromBytes PlutusV3 <| Bytes.fromHexUnchecked ""
 
             scriptWitness =
-                ( PlutusV3, WitnessByValue <| Bytes.fromHexUnchecked "" )
+                ( PlutusV3, Witness.ByValue <| Bytes.fromHexUnchecked "" )
 
             extraneousDatumWitness =
-                WitnessByValue <| Data.List []
+                Witness.ByValue <| Data.List []
 
             utxoBeingSpent =
                 makeRef "previouslySentToLock" 0
@@ -1403,7 +1404,7 @@ failTxBuilding =
             }
             (\error ->
                 case error of
-                    ExtraneousDatumWitness _ _ ->
+                    WitnessError (Witness.ExtraneousDatum _ _) ->
                         Expect.pass
 
                     _ ->
@@ -1416,10 +1417,10 @@ failTxBuilding =
                 Script.plutusScriptFromBytes PlutusV3 <| Bytes.fromHexUnchecked ""
 
             scriptWitness =
-                ( PlutusV3, WitnessByValue <| Bytes.fromHexUnchecked "" )
+                ( PlutusV3, Witness.ByValue <| Bytes.fromHexUnchecked "" )
 
             extraneousDatumWitness =
-                WitnessByValue <| Data.List []
+                Witness.ByValue <| Data.List []
 
             utxoBeingSpent =
                 makeRef "previouslySentToLock" 0
@@ -1461,7 +1462,7 @@ failTxBuilding =
             }
             (\error ->
                 case error of
-                    ExtraneousDatumWitness _ _ ->
+                    WitnessError (Witness.ExtraneousDatum _ _) ->
                         Expect.pass
 
                     _ ->
@@ -1474,7 +1475,7 @@ failTxBuilding =
                 Script.plutusScriptFromBytes PlutusV3 <| Bytes.fromHexUnchecked ""
 
             scriptWitness =
-                ( PlutusV3, WitnessByValue <| Bytes.fromHexUnchecked "" )
+                ( PlutusV3, Witness.ByValue <| Bytes.fromHexUnchecked "" )
 
             utxoBeingSpent =
                 makeRef "previouslySentToLock" 0
@@ -1517,7 +1518,7 @@ failTxBuilding =
             }
             (\error ->
                 case error of
-                    MissingDatumWitness _ _ ->
+                    WitnessError (Witness.MissingDatum _ _) ->
                         Expect.pass
 
                     _ ->
@@ -1530,7 +1531,7 @@ failTxBuilding =
                 Script.plutusScriptFromBytes PlutusV3 <| Bytes.fromHexUnchecked ""
 
             scriptWitness =
-                ( PlutusV3, WitnessByValue <| Bytes.fromHexUnchecked "" )
+                ( PlutusV3, Witness.ByValue <| Bytes.fromHexUnchecked "" )
 
             utxoBeingSpent =
                 makeRef "previouslySentToLock" 0
@@ -1571,7 +1572,7 @@ failTxBuilding =
                 [ Spend <|
                     FromPlutusScript
                         { spentInput = utxoBeingSpent
-                        , datumWitness = Just <| WitnessByReference utxoRefWithoutDatum
+                        , datumWitness = Just <| Witness.ByReference utxoRefWithoutDatum
                         , plutusScriptWitness =
                             { script = scriptWitness
                             , redeemerData = \_ -> Data.List []
@@ -1583,7 +1584,7 @@ failTxBuilding =
             }
             (\error ->
                 case error of
-                    MissingDatumWitness _ _ ->
+                    WitnessError (Witness.MissingDatum _ _) ->
                         Expect.pass
 
                     _ ->
@@ -1596,7 +1597,7 @@ failTxBuilding =
                 Script.plutusScriptFromBytes PlutusV3 <| Bytes.fromHexUnchecked ""
 
             scriptWitness =
-                ( PlutusV3, WitnessByValue <| Bytes.fromHexUnchecked "" )
+                ( PlutusV3, Witness.ByValue <| Bytes.fromHexUnchecked "" )
 
             utxoBeingSpent =
                 makeRef "previouslySentToLock" 0
@@ -1630,7 +1631,7 @@ failTxBuilding =
                 [ Spend <|
                     FromPlutusScript
                         { spentInput = utxoBeingSpent
-                        , datumWitness = Just <| WitnessByValue wrongDatum
+                        , datumWitness = Just <| Witness.ByValue wrongDatum
                         , plutusScriptWitness =
                             { script = scriptWitness
                             , redeemerData = \_ -> Data.List []
@@ -1642,7 +1643,7 @@ failTxBuilding =
             }
             (\error ->
                 case error of
-                    DatumHashMismatch _ _ ->
+                    WitnessError (Witness.DatumHashMismatch _ _) ->
                         Expect.pass
 
                     _ ->
@@ -1655,7 +1656,7 @@ failTxBuilding =
                 Script.plutusScriptFromBytes PlutusV3 <| Bytes.fromHexUnchecked ""
 
             scriptWitness =
-                ( PlutusV3, WitnessByValue <| Bytes.fromHexUnchecked "" )
+                ( PlutusV3, Witness.ByValue <| Bytes.fromHexUnchecked "" )
 
             utxoBeingSpent =
                 makeRef "previouslySentToLock" 0
@@ -1699,7 +1700,7 @@ failTxBuilding =
                 [ Spend <|
                     FromPlutusScript
                         { spentInput = utxoBeingSpent
-                        , datumWitness = Just <| WitnessByReference utxoRef
+                        , datumWitness = Just <| Witness.ByReference utxoRef
                         , plutusScriptWitness =
                             { script = scriptWitness
                             , redeemerData = \_ -> Data.List []
@@ -1711,7 +1712,7 @@ failTxBuilding =
             }
             (\error ->
                 case error of
-                    DatumHashMismatch _ _ ->
+                    WitnessError (Witness.DatumHashMismatch _ _) ->
                         Expect.pass
 
                     _ ->
@@ -1779,7 +1780,7 @@ indexedScript =
         \index ->
             { script =
                 ( Script.plutusVersion plutusScript
-                , WitnessByValue <| Script.cborWrappedBytes plutusScript
+                , Witness.ByValue <| Script.cborWrappedBytes plutusScript
                 )
             , redeemerData = \_ -> Data.Int <| Integer.fromSafeInt index
             , requiredSigners = []

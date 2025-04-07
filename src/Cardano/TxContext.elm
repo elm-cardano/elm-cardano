@@ -7,13 +7,13 @@ Very similar to the Plutus script context, but available offchain.
 
 -}
 
-import Bytes.Comparable as Bytes exposing (Bytes)
+import Bytes.Comparable exposing (Bytes)
 import Cardano.Address exposing (CredentialHash, StakeAddress)
 import Cardano.Gov exposing (ActionId, ProposalProcedure, Voter, VotingProcedure)
 import Cardano.MultiAsset as MultiAsset exposing (MultiAsset)
 import Cardano.Redeemer exposing (Redeemer)
 import Cardano.Transaction exposing (Certificate, Transaction)
-import Cardano.Utxo as Utxo exposing (DatumOption(..), Output, OutputReference)
+import Cardano.Utxo as Utxo exposing (Output, OutputReference)
 import Cardano.Value exposing (Value)
 import Dict.Any
 import Integer exposing (Integer)
