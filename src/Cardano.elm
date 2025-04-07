@@ -1120,21 +1120,28 @@ finalizeAdvanced { govState, localStateUtxos, coinSelectionAlgo, evalScriptsCost
                                     |> List.map (\addr -> ( addr, () ))
                                     |> Address.dictFromList
                                 )
+
+                        aggregate coinSelections =
+                            Dict.Any.foldl insertOneSelection { selectedUtxos = Utxo.emptyRefDict, changeOutputs = [] } coinSelections
+
+                        insertOneSelection _ { selectedUtxos, changeOutputs } acc =
+                            { selectedUtxos = List.foldl (\( ref, output ) -> Dict.Any.insert ref output) acc.selectedUtxos selectedUtxos
+                            , changeOutputs = changeOutputs ++ acc.changeOutputs
+                            }
                     in
                     -- UTxO selection
                     Result.map2
                         (\coinSelection collateralSelection ->
-                            --> coinSelection : Address.Dict (Selection, List Output)
-                            -- Accumulate all selected UTxOs and newly created outputs
-                            accumPerAddressSelection coinSelection
-                                --> { selectedInputs : Utxo.RefDict Ouptut, createdOutputs : List Output }
-                                -- Aggregate with pre-selected inputs and pre-created outputs
-                                |> (\selection -> updateTxContext localStateUtxos processedIntents selection txContext)
+                            -- coinSelection : Address.Dict { selectedUtxos : List ( OutputReference, Output ), changeOutputs : List Output }
+                            -- Aggregate with pre-selected inputs and pre-created outputs
+                            updateTxContext localStateUtxos processedIntents (aggregate coinSelection) txContext
                                 --> TransactionBody
                                 |> buildTx feeAmount collateralSelection processedIntents processedOtherInfo
                         )
                         (computeCoinSelection localStateUtxos roundFees processedIntents coinSelectionAlgo)
-                        (computeCollateralSelection localStateUtxos collateralSources collateralAmount)
+                        (CoinSelection.collateral (CoinSelection.CollateralContext (Dict.Any.toList localStateUtxos) collateralSources collateralAmount)
+                            |> Result.mapError CollateralSelectionError
+                        )
 
                 computeRefScriptBytesForTx tx =
                     computeRefScriptBytes localStateUtxos (tx.body.referenceInputs ++ tx.body.inputs)
@@ -1581,7 +1588,7 @@ preprocessCert certWithKeyF certWithScriptF { deposit, refund } cred preProcesse
 type alias ProcessedIntents =
     { freeInputs : Address.Dict Value
     , freeOutputs : Address.Dict Value
-    , guaranteedUtxos : Address.Dict (List OutputReference)
+    , guaranteedUtxos : Address.Dict (List ( OutputReference, Output ))
     , preSelected : { sum : Value, inputs : Utxo.RefDict (Maybe (TxContext -> Data)) }
     , preCreated : TxContext -> { sum : Value, outputs : List Output }
     , nativeScriptSources : List (WitnessSource NativeScript)
@@ -1756,20 +1763,20 @@ processIntents govState localStateUtxos txIntents =
                     |> List.foldl MultiAsset.mintAdd MultiAsset.empty
                     |> MultiAsset.normalize Integer.isZero
 
-            guaranteedUtxos : Address.Dict (List OutputReference)
+            guaranteedUtxos : Address.Dict (List ( OutputReference, Output ))
             guaranteedUtxos =
                 preProcessedIntents.guaranteedUtxos
                     |> List.foldl
                         (\ref acc ->
                             Dict.Any.get ref localStateUtxos
                                 |> Maybe.map
-                                    (\{ address } ->
-                                        case Dict.Any.get address acc of
+                                    (\output ->
+                                        case Dict.Any.get output.address acc of
                                             Nothing ->
-                                                Dict.Any.insert address [ ref ] acc
+                                                Dict.Any.insert output.address [ ( ref, output ) ] acc
 
-                                            Just refs ->
-                                                Dict.Any.insert address (ref :: refs) acc
+                                            Just utxos ->
+                                                Dict.Any.insert output.address (( ref, output ) :: utxos) acc
                                     )
                                 |> Maybe.withDefault acc
                         )
@@ -2326,138 +2333,10 @@ processOtherInfo otherInfo =
         Ok processedOtherInfo
 
 
-{-| Perform collateral selection.
-
-Only UTxOs at the provided whitelist of addresses are viable.
-UTxOs are picked following a prioritization list.
-
-  - First, prioritize UTxOs with only Ada in them,
-    and with >= ? Ada, but lowest amounts prioritized over higher amounts.
-  - Second, prioritize UTxOs with >= ? Ada, and that would cost minimal fees to add,
-    so basically no reference script, no datums, and minimal number of assets.
-  - Third, everything else, prioritized with >= ? Ada first,
-    and sorted by minimal fee cost associated.
-  - Finally, all the rest, sorted by "available" ada amounts (without min Ada),
-    with bigger available amounts prioritized over smaller amounts.
-
--}
-computeCollateralSelection :
-    Utxo.RefDict Output
-    -> Address.Dict ()
-    -> Natural
-    -> Result TxFinalizationError CoinSelection.Selection
-computeCollateralSelection localStateUtxos collateralSources collateralAmount =
-    let
-        -- TODO: max inputs should come from a network parameter
-        maxInputCount =
-            3
-
-        utxosInAllowedAddresses : List ( OutputReference, Output )
-        utxosInAllowedAddresses =
-            Dict.Any.toList localStateUtxos
-                |> List.filter
-                    (\( _, output ) -> Dict.Any.member output.address collateralSources)
-
-        ( adaOnly, notAdaOnly ) =
-            List.partition (\( _, output ) -> Utxo.isAdaOnly output)
-                utxosInAllowedAddresses
-
-        ( assetsOnly, notAssetsOnly ) =
-            List.partition (\( _, output ) -> Utxo.isAssetsOnly output)
-                notAdaOnly
-
-        -- Some threshold to guarantee that after collateral is spent,
-        -- there is still enough for an ada-only output (approximated at 1 ada)
-        adaOnlyThreshold =
-            Natural.add collateralAmount (Natural.fromSafeInt 1000000)
-
-        -- Helper function to convert the lovelace amount in an output into
-        -- a comparable value, safe from JS float overflow.
-        -- By removing 5 decimals, we are guaranteed to have amounts
-        -- lower than 450B (45B ada total supply), which is way below JS max safe integer around 2^53
-        adaComparableAmount : Natural -> Float
-        adaComparableAmount lovelace =
-            lovelace
-                |> Natural.divBy (Natural.fromSafeInt 100000)
-                |> Maybe.withDefault Natural.zero
-                |> Natural.toInt
-                |> toFloat
-
-        -- First, prioritize UTxOs with only Ada in them,
-        -- and with >= ? Ada, but lowest amounts prioritized over higher amounts.
-        ( highAdaOnly, lowAdaOnly ) =
-            List.partition
-                (\( _, { amount } ) -> amount.lovelace |> Natural.isGreaterThan adaOnlyThreshold)
-                adaOnly
-
-        highAdaOnlyCount =
-            List.length highAdaOnly
-
-        highAdaOnlySorted =
-            List.sortBy (\( _, { amount } ) -> adaComparableAmount amount.lovelace) highAdaOnly
-
-        availableUtxos =
-            if highAdaOnlyCount >= maxInputCount then
-                highAdaOnlySorted
-
-            else
-                -- Second, prioritize UTxOs with >= ? Ada, and that would cost minimal fees to add,
-                -- so basically no reference script, no datums, and minimal number of assets.
-                let
-                    -- Add another ada for priority UTxOs with other tokens
-                    assetOnlyThreshold =
-                        Natural.add adaOnlyThreshold (Natural.fromSafeInt 1000000)
-
-                    ( highAssetsOnly, lowAssetsOnly ) =
-                        List.partition
-                            (\( _, { amount } ) -> amount.lovelace |> Natural.isGreaterThan assetOnlyThreshold)
-                            assetsOnly
-
-                    highAssetsOnlyCount =
-                        List.length highAssetsOnly
-
-                    highAssetsOnlySorted =
-                        List.sortBy (Tuple.second >> Utxo.bytesWidth) highAssetsOnly
-                in
-                if highAdaOnlyCount + highAssetsOnlyCount >= maxInputCount then
-                    List.concat [ highAdaOnlySorted, highAssetsOnlySorted ]
-
-                else
-                    -- Third, everything else, prioritized with >= ? Ada first,
-                    -- and sorted by minimal fee cost associated.
-                    -- Finally, all the rest, sorted by "available" ada amounts (without min Ada),
-                    -- with bigger available amounts prioritized over smaller amounts.
-                    --
-                    -- TODO: Improve, but honestly it’s very low priority,
-                    -- so for now we just sort the rest by free ada (after removing min Ada).
-                    let
-                        freeAdaComparable : Output -> Float
-                        freeAdaComparable output =
-                            adaComparableAmount (Utxo.freeAda output)
-
-                        allOtherUtxos =
-                            List.concat [ lowAdaOnly, lowAssetsOnly, notAssetsOnly ]
-
-                        allOtherUtxosSorted =
-                            List.sortBy (Tuple.second >> freeAdaComparable) allOtherUtxos
-                    in
-                    List.concat [ highAdaOnlySorted, highAssetsOnlySorted, allOtherUtxosSorted ]
-    in
-    CoinSelection.inOrderedList maxInputCount
-        { alreadySelectedUtxos = []
-        , targetAmount = Value.onlyLovelace collateralAmount
-        , availableUtxos = availableUtxos
-        }
-        |> Result.mapError CollateralSelectionError
-
-
 {-| Perform coin selection for the required input per address.
 
-For each address, create an [Output] with the change.
+For each address, create outputs with the change.
 The output must satisfy minAda.
-
-TODO: If there is more than 5 ada free in the change (after minAda),
-also create a pure-ada output so that we don’t deplete all outputs viable for collateral.
 
 -}
 computeCoinSelection :
@@ -2465,37 +2344,28 @@ computeCoinSelection :
     -> Fee
     -> ProcessedIntents
     -> CoinSelection.Algorithm
-    -> Result TxFinalizationError (Address.Dict ( CoinSelection.Selection, List Output ))
+    -> Result TxFinalizationError (Address.Dict { selectedUtxos : List ( OutputReference, Output ), changeOutputs : List Output })
 computeCoinSelection localStateUtxos fee processedIntents coinSelectionAlgo =
     let
-        dummyOutput =
-            { address = Byron <| Bytes.fromHexUnchecked ""
-            , amount = Value.zero
-            , datumOption = Nothing
-            , referenceScript = Nothing
-            }
-
         -- Inputs not available for selection because already manually preselected
-        notAvailableInputs =
+        notAvailableUtxos =
             -- Using dummyOutput to have the same type as localStateUtxos
             Dict.Any.map (\_ _ -> dummyOutput) processedIntents.preSelected.inputs
 
-        -- Precompute selectable inputs per addresses
-        availableInputs : Address.Dict (List ( OutputReference, Output ))
-        availableInputs =
-            Dict.Any.diff localStateUtxos notAvailableInputs
-                --> Utxo.RefDict Output
-                |> Dict.Any.foldl
-                    (\ref output ->
-                        -- append the output to the list of outputs for the same address
-                        Dict.Any.update output.address
-                            (Just << (::) ( ref, output ) << Maybe.withDefault [])
-                    )
-                    Address.emptyDict
+        dummyOutput =
+            Output (Byron Bytes.empty) Value.zero Nothing Nothing
 
-        -- TODO: adjust at least with the number of different tokens in target Amount
-        maxInputCount =
-            10
+        -- Available inputs are the ones which are not ... unavailable! (logic)
+        -- Group them per address
+        availableUtxos : Address.Dict (List ( OutputReference, Output ))
+        availableUtxos =
+            Dict.Any.diff localStateUtxos notAvailableUtxos
+                --> Utxo.RefDict Output
+                |> Dict.Any.foldl insertInUtxoListDict Address.emptyDict
+
+        insertInUtxoListDict ref output =
+            Dict.Any.update output.address
+                (Just << (::) ( ref, output ) << Maybe.withDefault [])
 
         -- Add the fee to free inputs
         addFee : Address -> Natural -> Address.Dict Value -> Address.Dict Value
@@ -2515,7 +2385,7 @@ computeCoinSelection localStateUtxos fee processedIntents coinSelectionAlgo =
                     addFee paymentSource defaultAutoFee processedIntents.freeInputs
 
         -- These are the free outputs that are unrelated to any address with fees or free input.
-        -- It’s address dict keys are all different from those of freeInputsWithFee
+        -- Keys only contain addresses that do not appear in freeInputsWithFee.
         independentFreeOutputValues : Address.Dict Value
         independentFreeOutputValues =
             Dict.Any.diff processedIntents.freeOutputs freeInputsWithFee
@@ -2529,120 +2399,63 @@ computeCoinSelection localStateUtxos fee processedIntents coinSelectionAlgo =
                 |> Result.mapError NotEnoughMinAda
 
         -- These are the free outputs that are related to any address with fees or free input.
-        -- It’s address dict keys are a subset of those of freeInputsWithFee
+        -- Keys are a subset of the address in freeInputsWithFee
         relatedFreeOutputValues : Address.Dict Value
         relatedFreeOutputValues =
             Dict.Any.diff processedIntents.freeOutputs independentFreeOutputValues
 
-        -- Merge the two dicts :
+        -- Build the per-address coin selection context.
+        -- Merge the two dicts:
         --   - freeInputsWithFee (that will become the coin selection target value)
         --   - relatedFreeOutputValues (that will be added to the coin selection change)
-        targetValuesAndOutputs : Address.Dict { targetInputValue : Value, freeOutput : Value }
-        targetValuesAndOutputs =
+        perAddressContext : Address.Dict CoinSelection.PerAddressContext
+        perAddressContext =
             let
+                context addr targetValue alreadyOwed =
+                    { targetValue = targetValue
+                    , alreadyOwed = alreadyOwed
+                    , availableUtxos = Dict.Any.get addr availableUtxos |> Maybe.withDefault []
+                    , alreadySelectedUtxos = []
+                    }
+
                 whenInput addr v =
-                    Dict.Any.insert addr { targetInputValue = v, freeOutput = Value.zero }
+                    Dict.Any.insert addr (context addr v Value.zero)
 
                 whenOutput addr v =
-                    Dict.Any.insert addr { targetInputValue = Value.zero, freeOutput = v }
+                    Dict.Any.insert addr (context addr Value.zero v)
 
                 whenBoth addr input output =
-                    -- TODO: some optimization can be done here to reduce both sides
-                    Dict.Any.insert addr { targetInputValue = input, freeOutput = output }
+                    Dict.Any.insert addr (context addr input output)
             in
-            Dict.Any.merge whenInput
+            Dict.Any.merge
+                whenInput
                 whenBoth
                 whenOutput
                 freeInputsWithFee
                 relatedFreeOutputValues
                 Address.emptyDict
 
-        -- Perform coin selection and output creation with the change
-        -- for all address where there are target values (inputs and fees)
-        -- TODO: do it instead per credential, not per address???
-        coinSelectionAndChangeOutputs : Result TxFinalizationError (Address.Dict ( CoinSelection.Selection, List Output ))
+        perAddressConfig : Address -> CoinSelection.PerAddressConfig
+        perAddressConfig _ =
+            -- Default to the same algorithm on all addresses
+            { selectionAlgo = coinSelectionAlgo
+
+            -- Default to no normalization
+            -- TODO: simplify by default?
+            , normalizationAlgo = \{ target, owed } -> { normalizedTarget = target, normalizedOwed = owed }
+
+            -- Default to single change output
+            -- TODO: If there is more than 5 ada free in the change (after minAda),
+            -- also create a pure-ada output so that we don’t deplete all outputs viable for collateral.
+            , changeAlgo = \value -> [ value ]
+            }
+
         coinSelectionAndChangeOutputs =
-            targetValuesAndOutputs
-                -- Apply the selection algo for each address with input requirements
-                |> Dict.Any.map
-                    (\addr { targetInputValue, freeOutput } ->
-                        let
-                            hasFreeOutput =
-                                freeOutput /= Value.zero
-
-                            availableUtxosDict =
-                                Maybe.withDefault [] (Dict.Any.get addr availableInputs)
-                                    |> Utxo.refDictFromList
-
-                            context targetAmount alreadySelected =
-                                { targetAmount = targetAmount
-                                , alreadySelectedUtxos = alreadySelected
-                                , availableUtxos =
-                                    Dict.Any.diff availableUtxosDict (Utxo.refDictFromList alreadySelected)
-                                        |> Dict.Any.toList
-                                }
-
-                            -- Create the output(s) with the change + free output, if there is enough minAda
-                            makeChangeOutput : CoinSelection.Selection -> Result CoinSelection.Error ( CoinSelection.Selection, List Output )
-                            makeChangeOutput selection =
-                                case ( selection.change, hasFreeOutput ) of
-                                    ( Nothing, False ) ->
-                                        Ok ( selection, [] )
-
-                                    _ ->
-                                        let
-                                            change =
-                                                Value.add (Maybe.withDefault Value.zero selection.change) freeOutput
-
-                                            changeOutput =
-                                                { address = addr
-                                                , amount = change
-                                                , datumOption = Nothing
-                                                , referenceScript = Nothing
-                                                }
-
-                                            minAda =
-                                                Utxo.minAda changeOutput
-                                        in
-                                        if change.lovelace |> Natural.isGreaterThanOrEqual minAda then
-                                            -- TODO: later, if there is more than 5 free ada, make an additional ada-only output
-                                            Ok ( selection, [ changeOutput ] )
-
-                                        else
-                                            Err <|
-                                                CoinSelection.UTxOBalanceInsufficient
-                                                    { selectedUtxos = selection.selectedUtxos
-                                                    , missingValue = Value.onlyLovelace <| Natural.sub minAda change.lovelace
-                                                    }
-
-                            coinSelectIter targetValue alreadySelected =
-                                coinSelectionAlgo maxInputCount (context targetValue alreadySelected)
-                                    |> Result.andThen makeChangeOutput
-
-                            guaranteedSelected =
-                                Dict.Any.get addr processedIntents.guaranteedUtxos
-                                    |> Maybe.withDefault []
-                                    |> List.filterMap (\ref -> Dict.Any.get ref localStateUtxos |> Maybe.map (\output -> ( ref, output )))
-                        in
-                        -- Try coin selection up to 2 times if the only missing value is Ada.
-                        -- Why 2 times? because the first time, it might be missing minAda for the change output.
-                        case coinSelectIter targetInputValue guaranteedSelected of
-                            (Err (CoinSelection.UTxOBalanceInsufficient err1)) as err ->
-                                if MultiAsset.isEmpty err1.missingValue.assets then
-                                    coinSelectIter (Value.add targetInputValue err1.missingValue) err1.selectedUtxos
-
-                                else
-                                    err
-
-                            selectionResult ->
-                                selectionResult
-                    )
-                -- Join the Dict (Result _ _) into Result _ Dict
-                |> resultDictJoin
+            CoinSelection.perAddress perAddressConfig perAddressContext
                 |> Result.mapError FailedToPerformCoinSelection
     in
     Result.map2
-        (Dict.Any.foldl (\addr output -> Dict.Any.insert addr ( { selectedUtxos = [], change = Nothing }, [ output ] )))
+        (Dict.Any.foldl (\addr output -> Dict.Any.insert addr { selectedUtxos = [], changeOutputs = [ output ] }))
         coinSelectionAndChangeOutputs
         validIndependentFreeOutputs
 
@@ -2654,27 +2467,10 @@ resultDictJoin dict =
     Dict.Any.foldl (\key -> Result.map2 (Dict.Any.insert key)) (Ok <| Dict.Any.removeAll dict) dict
 
 
-{-| Helper function to accumulate all selected UTxOs and newly created outputs.
--}
-accumPerAddressSelection :
-    Address.Dict ( CoinSelection.Selection, List Output )
-    -> { selectedInputs : Utxo.RefDict Output, createdOutputs : List Output }
-accumPerAddressSelection allSelections =
-    Dict.Any.foldl
-        (\_ ( { selectedUtxos }, createdOutputs ) acc ->
-            { selectedInputs =
-                List.foldl (\( ref, output ) -> Dict.Any.insert ref output) acc.selectedInputs selectedUtxos
-            , createdOutputs = createdOutputs ++ acc.createdOutputs
-            }
-        )
-        { selectedInputs = Utxo.emptyRefDict, createdOutputs = [] }
-        allSelections
-
-
 {-| Helper function to update the TxContext after coin selection.
 -}
-updateTxContext : Utxo.RefDict Output -> ProcessedIntents -> { selectedInputs : Utxo.RefDict Output, createdOutputs : List Output } -> TxContext -> TxContext
-updateTxContext localStateUtxos intents { selectedInputs, createdOutputs } old =
+updateTxContext : Utxo.RefDict Output -> ProcessedIntents -> { selectedUtxos : Utxo.RefDict Output, changeOutputs : List Output } -> TxContext -> TxContext
+updateTxContext localStateUtxos intents { selectedUtxos, changeOutputs } old =
     -- reference inputs do not change with UTxO selection, only spent inputs
     -- Inputs are sorted by output ref
     { old
@@ -2684,8 +2480,8 @@ updateTxContext localStateUtxos intents { selectedInputs, createdOutputs } old =
                 preSelected =
                     Dict.Any.filterMap (\ref _ -> Dict.Any.get ref localStateUtxos) intents.preSelected.inputs
             in
-            Dict.Any.toList (Dict.Any.union preSelected selectedInputs)
-        , outputs = (intents.preCreated old).outputs ++ createdOutputs
+            Dict.Any.toList (Dict.Any.union preSelected selectedUtxos)
+        , outputs = (intents.preCreated old).outputs ++ changeOutputs
     }
 
 
