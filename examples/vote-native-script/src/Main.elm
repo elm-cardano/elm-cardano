@@ -2,13 +2,13 @@ port module Main exposing (main)
 
 import Browser
 import Bytes.Comparable as Bytes exposing (Bytes)
-import Cardano exposing (CertificateIntent(..), Fee(..), SpendSource(..), TxIntent(..))
 import Cardano.Address as Address exposing (Address, Credential(..), CredentialHash, NetworkId(..), StakeCredential(..))
 import Cardano.Cip30 as Cip30
 import Cardano.CoinSelection as CoinSelection
 import Cardano.Gov exposing (ActionId, CostModels, Drep(..), Vote(..))
 import Cardano.Script as Script exposing (NativeScript(..), PlutusVersion(..))
 import Cardano.Transaction as Transaction exposing (Transaction)
+import Cardano.TxIntent as TxIntent exposing (CertificateIntent(..), Fee(..), SpendSource(..), TxIntent(..))
 import Cardano.Uplc as Uplc
 import Cardano.Utxo as Utxo exposing (DatumOption(..), Output, OutputReference, TransactionId)
 import Cardano.Value
@@ -369,7 +369,7 @@ update msg model =
                     let
                         -- Update the known UTxOs set after the given Tx is processed
                         { updatedState, spent, created } =
-                            Cardano.updateLocalState txId tx ctx.localStateUtxos
+                            TxIntent.updateLocalState txId tx ctx.localStateUtxos
 
                         -- Also update specifically our wallet UTxOs knowledge
                         -- This isn’t purely necessary, but just to keep a consistent wallet state
@@ -469,8 +469,8 @@ update msg model =
                             , info = Nothing
                             }
                     ]
-                        |> Cardano.finalizeAdvanced
-                            { govState = Cardano.emptyGovernanceState
+                        |> TxIntent.finalizeAdvanced
+                            { govState = TxIntent.emptyGovernanceState
                             , localStateUtxos = ctx.localStateUtxos
                             , coinSelectionAlgo = CoinSelection.largestFirst
                             , evalScriptsCosts = Uplc.evalScriptsCosts Uplc.defaultVmConfig
@@ -548,8 +548,8 @@ update msg model =
                                 )
                         )
                     ]
-                        |> Cardano.finalizeAdvanced
-                            { govState = Cardano.emptyGovernanceState
+                        |> TxIntent.finalizeAdvanced
+                            { govState = TxIntent.emptyGovernanceState
                             , localStateUtxos = ctx.localStateUtxos
                             , coinSelectionAlgo = CoinSelection.largestFirst
                             , evalScriptsCosts = Uplc.evalScriptsCosts Uplc.defaultVmConfig
@@ -595,8 +595,8 @@ update msg model =
                     , SendTo ctx.loadedWallet.changeAddress <|
                         Cardano.Value.onlyLovelace refund
                     ]
-                        |> Cardano.finalizeAdvanced
-                            { govState = Cardano.emptyGovernanceState
+                        |> TxIntent.finalizeAdvanced
+                            { govState = TxIntent.emptyGovernanceState
                             , localStateUtxos = ctx.localStateUtxos
                             , coinSelectionAlgo = CoinSelection.largestFirst
                             , evalScriptsCosts = Uplc.evalScriptsCosts Uplc.defaultVmConfig

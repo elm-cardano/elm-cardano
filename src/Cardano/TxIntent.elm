@@ -1,4 +1,4 @@
-module Cardano exposing
+module Cardano.TxIntent exposing
     ( TxIntent(..), SpendSource(..)
     , CertificateIntent(..)
     , VoteIntent, ProposalIntent, ActionProposal(..)
@@ -2013,21 +2013,8 @@ computeCoinSelection :
 computeCoinSelection localStateUtxos fee processedIntents coinSelectionAlgo =
     let
         -- Inputs not available for selection because already manually preselected
-        notAvailableUtxos =
-            -- Using dummyOutput to have the same type as localStateUtxos
-            Dict.Any.map (\_ _ -> dummyOutput) processedIntents.preSelected.inputs
-
-        dummyOutput =
-            Output (Byron Bytes.empty) Value.zero Nothing Nothing
-
         -- Available inputs are the ones which are not ... unavailable! (logic)
         -- Group them per address
-        availableUtxos : Address.Dict (List ( OutputReference, Output ))
-        availableUtxos =
-            Dict.Any.diff localStateUtxos notAvailableUtxos
-                --> Utxo.RefDict Output
-                |> Dict.Any.foldl insertInUtxoListDict Address.emptyDict
-
         insertInUtxoListDict ref output =
             Dict.Any.update output.address
                 (Just << (::) ( ref, output ) << Maybe.withDefault [])
@@ -2065,10 +2052,6 @@ computeCoinSelection localStateUtxos fee processedIntents coinSelectionAlgo =
 
         -- These are the free outputs that are related to any address with fees or free input.
         -- Keys are a subset of the address in freeInputsWithFee
-        relatedFreeOutputValues : Address.Dict Value
-        relatedFreeOutputValues =
-            Dict.Any.diff processedIntents.freeOutputs independentFreeOutputValues
-
         -- Build the per-address coin selection context.
         -- Merge the two dicts:
         --   - freeInputsWithFee (that will become the coin selection target value)
@@ -2076,6 +2059,23 @@ computeCoinSelection localStateUtxos fee processedIntents coinSelectionAlgo =
         perAddressContext : Address.Dict CoinSelection.PerAddressContext
         perAddressContext =
             let
+                dummyOutput =
+                    Output (Byron Bytes.empty) Value.zero Nothing Nothing
+
+                notAvailableUtxos =
+                    -- Using dummyOutput to have the same type as localStateUtxos
+                    Dict.Any.map (\_ _ -> dummyOutput) processedIntents.preSelected.inputs
+
+                availableUtxos : Address.Dict (List ( OutputReference, Output ))
+                availableUtxos =
+                    Dict.Any.diff localStateUtxos notAvailableUtxos
+                        --> Utxo.RefDict Output
+                        |> Dict.Any.foldl insertInUtxoListDict Address.emptyDict
+
+                relatedFreeOutputValues : Address.Dict Value
+                relatedFreeOutputValues =
+                    Dict.Any.diff processedIntents.freeOutputs independentFreeOutputValues
+
                 context addr targetValue alreadyOwed =
                     { targetValue = targetValue
                     , alreadyOwed = alreadyOwed
