@@ -26,13 +26,13 @@ selection algorithm as described in CIP2 (<https://cips.cardano.org/cips/cip2/>)
 @docs perAddress, PerAddressConfig, PerAddressContext
 
 
-# Collateral
+# Collateral Selection
 
 @docs CollateralContext, collateral
 
 -}
 
-import Bytes.Comparable as Bytes exposing (Bytes)
+import Bytes.Comparable exposing (Bytes)
 import Cardano.Address as Address exposing (Address)
 import Cardano.MultiAsset as MultiAsset exposing (AssetName, PolicyId)
 import Cardano.Utxo as Utxo exposing (Output, OutputReference)
