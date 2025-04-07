@@ -1,7 +1,8 @@
 module Cardano.CoinSelection exposing
     ( Context, Error(..), Selection, Algorithm
     , largestFirst, inOrderedList
-    , collateral
+    , perAddress, PerAddressConfig, PerAddressContext
+    , CollateralContext, collateral
     )
 
 {-| Module `Cardano.CoinSelection` provides functionality for performing
@@ -20,19 +21,25 @@ selection algorithm as described in CIP2 (<https://cips.cardano.org/cips/cip2/>)
 @docs largestFirst, inOrderedList
 
 
+# Per-address Selection
+
+@docs perAddress, PerAddressConfig, PerAddressContext
+
+
 # Collateral
 
-@docs collateral
+@docs CollateralContext, collateral
 
 -}
 
-import Bytes.Comparable exposing (Bytes)
-import Cardano.Address as Address
+import Bytes.Comparable as Bytes exposing (Bytes)
+import Cardano.Address as Address exposing (Address)
 import Cardano.MultiAsset as MultiAsset exposing (AssetName, PolicyId)
 import Cardano.Utxo as Utxo exposing (Output, OutputReference)
 import Cardano.Value as Value exposing (Value)
-import Dict.Any
+import Dict.Any exposing (AnyDict)
 import Natural as N exposing (Natural)
+import Result.Extra
 
 
 {-| Enumerates the possible errors that can occur during coin selection.
@@ -270,6 +277,190 @@ accumOutputsUntilDone ({ maxInputCount, selectedInputCount, accumulatedAmount, t
         Ok state
 
 
+
+-- Per-address ###########################################################################
+
+
+{-| Configuration of the per-address section algorithm.
+
+Since the per-address algorithm also merges the change with pre-existing owed values,
+you need to provide two additional algorithms:
+
+  - normalizationAlgo: specifies how to simplify the target input and pre-owed value
+  - changeAlgo: specifies how to split (or not) the returned change into multiple outputs
+
+The normalization algorithm enables control over what to do in situations where
+the same address is both asked some value and returned some value.
+Let’s take the simplified example where intents are spending 10 ada,
+and returning 15 ada to the same address.
+If we normalize the asked and owed value, the result is just to return 5 ada,
+so we don’t even need to perform coin selection for this address, since the balance is strictly positive.
+
+But sometimes you might want to force UTxO selection, even if the balance is null.
+For example if you want to collect all native tokens of a given policyId into a single output.
+
+So by making both the normalization algorithm and the change algorithm configurable,
+we enable easily customizable behaviors, per-address.
+Because you might not want the same strategy for the wallet address and for other addresses.
+
+-}
+type alias PerAddressConfig =
+    { selectionAlgo : Algorithm
+    , normalizationAlgo : { target : Value, owed : Value } -> { normalizedTarget : Value, normalizedOwed : Value }
+    , changeAlgo : Value -> List Value
+    }
+
+
+{-| The per-address coin selection context.
+
+In addition to all three fields of the usual selection `Context`,
+this one also contains an `alreadyOwed` value.
+
+The reason is that per-address coin selection is intended to be run by
+the Tx building algorithm, and expects to generate actual `Output` returned values.
+These outputs will merge both the coin selection change,
+and value that was already destined to a given address.
+Knowledge of both enables better handling of change outputs and minAda for these.
+
+-}
+type alias PerAddressContext =
+    { availableUtxos : List ( OutputReference, Output )
+    , alreadySelectedUtxos : List ( OutputReference, Output )
+    , targetValue : Value
+    , alreadyOwed : Value
+    }
+
+
+{-| Per-address coin selection algorithm.
+
+This is intended to be used by the Tx building algorithm, but also available publicly.
+Contrary to the generic coin selection algorithm that has no notion of addresses,
+this algorithm performs coin selection per-address.
+It also provides a more fine-grained handling of the selection change outputs.
+
+By making it per-address configurable, we enable easy customization
+of the selection algorithm, and the change algorithm depending
+on the type of address being handled.
+For example, the connected wallet address can pre-split the change,
+to keep around UTxOs for collaterals,
+while any other address could bundle everything into a single UTxO.
+
+-}
+perAddress :
+    (Address -> PerAddressConfig)
+    -> Address.Dict PerAddressContext
+    -> Result Error (Address.Dict { selectedUtxos : List ( OutputReference, Output ), changeOutputs : List Output })
+perAddress perAddressConfig perAddressContext =
+    let
+        -- TODO: adjust at least with the number of different tokens in target Amount
+        maxInputCount =
+            10
+
+        handleAddress : Address -> PerAddressContext -> Result Error { selectedUtxos : List ( OutputReference, Output ), changeOutputs : List Output }
+        handleAddress addr { availableUtxos, alreadySelectedUtxos, targetValue, alreadyOwed } =
+            let
+                { selectionAlgo, normalizationAlgo, changeAlgo } =
+                    perAddressConfig addr
+
+                { normalizedTarget, normalizedOwed } =
+                    normalizationAlgo { target = targetValue, owed = alreadyOwed }
+
+                isOwed =
+                    normalizedOwed /= Value.zero
+
+                -- Coin selection can be tried up to 2 times,
+                -- in case there is not enough minAda the first time.
+                coinSelectIter iterationTargetValue =
+                    selectionAlgo maxInputCount (context iterationTargetValue)
+                        |> Result.andThen makeChangeOutput
+
+                context : Value -> Context
+                context iterationTargetValue =
+                    { targetAmount = iterationTargetValue
+                    , alreadySelectedUtxos = alreadySelectedUtxos
+                    , availableUtxos = availableUtxos
+                    }
+
+                -- Create the output(s) with the change + owed value, if there is enough minAda
+                makeChangeOutput : Selection -> Result Error { selectedUtxos : List ( OutputReference, Output ), changeOutputs : List Output }
+                makeChangeOutput selection =
+                    case ( selection.change, isOwed ) of
+                        -- If there is no pre-owed value to add to change,
+                        -- and no selection change, then there is no change output.
+                        ( Nothing, False ) ->
+                            Ok { selectedUtxos = selection.selectedUtxos, changeOutputs = [] }
+
+                        -- Otherwise there will be a change output, containing the sum
+                        -- of the selection change, and the pre-owed value.
+                        _ ->
+                            let
+                                totalChange =
+                                    Value.add (Maybe.withDefault Value.zero selection.change) normalizedOwed
+
+                                -- Apply the change algorithm, that may split the change total
+                                -- into multiple chunks, for example to isolate native assets,
+                                -- or create a dedicated UTxOs for collateral, etc.
+                                splitChange =
+                                    changeAlgo totalChange
+
+                                changeOutputs =
+                                    List.map (\value -> Output addr value Nothing Nothing) splitChange
+                            in
+                            case Result.Extra.combine (List.map Utxo.checkMinAda changeOutputs) of
+                                Ok _ ->
+                                    Ok { selectedUtxos = selection.selectedUtxos, changeOutputs = changeOutputs }
+
+                                Err _ ->
+                                    let
+                                        missingMinAda output =
+                                            N.sub (Utxo.minAda output) output.amount.lovelace
+
+                                        totalMissingAda =
+                                            List.map missingMinAda changeOutputs
+                                                |> List.foldl N.add N.zero
+                                    in
+                                    Err <|
+                                        UTxOBalanceInsufficient
+                                            { selectedUtxos = selection.selectedUtxos
+                                            , missingValue = Value.onlyLovelace totalMissingAda
+                                            }
+            in
+            -- Try coin selection up to 2 times if the only missing value is Ada (for minAda).
+            case coinSelectIter normalizedTarget of
+                (Err (UTxOBalanceInsufficient err1)) as err ->
+                    if MultiAsset.isEmpty err1.missingValue.assets then
+                        coinSelectIter (Value.add normalizedTarget err1.missingValue)
+
+                    else
+                        err
+
+                selectionResult ->
+                    selectionResult
+    in
+    Dict.Any.map handleAddress perAddressContext
+        |> resultDictJoin
+
+
+{-| Helper function to join Dict Result into Result Dict.
+-}
+resultDictJoin : AnyDict comparable key (Result err value) -> Result err (AnyDict comparable key value)
+resultDictJoin dict =
+    Dict.Any.foldl (\key -> Result.map2 (Dict.Any.insert key)) (Ok <| Dict.Any.removeAll dict) dict
+
+
+
+-- Collateral ############################################################################
+
+
+{-| Holds the arguments necessary for performing collateral selection.
+-}
+type alias CollateralContext =
+    { availableUtxos : List ( OutputReference, Output )
+    , allowedAddresses : Address.Dict ()
+    , targetAmount : Natural
+    }
+
+
 {-| Perform collateral selection.
 
 Only UTxOs at the provided whitelist of addresses are viable.
@@ -285,12 +476,8 @@ UTxOs are picked following a prioritization list.
     with bigger available amounts prioritized over smaller amounts.
 
 -}
-collateral :
-    Utxo.RefDict Output
-    -> Address.Dict ()
-    -> Natural
-    -> Result Error Selection
-collateral localStateUtxos collateralSources collateralAmount =
+collateral : CollateralContext -> Result Error Selection
+collateral { availableUtxos, allowedAddresses, targetAmount } =
     let
         -- TODO: max inputs should come from a network parameter
         maxInputCount =
@@ -298,9 +485,9 @@ collateral localStateUtxos collateralSources collateralAmount =
 
         utxosInAllowedAddresses : List ( OutputReference, Output )
         utxosInAllowedAddresses =
-            Dict.Any.toList localStateUtxos
+            availableUtxos
                 |> List.filter
-                    (\( _, output ) -> Dict.Any.member output.address collateralSources)
+                    (\( _, output ) -> Dict.Any.member output.address allowedAddresses)
 
         ( adaOnly, notAdaOnly ) =
             List.partition (\( _, output ) -> Utxo.isAdaOnly output)
@@ -313,7 +500,7 @@ collateral localStateUtxos collateralSources collateralAmount =
         -- Some threshold to guarantee that after collateral is spent,
         -- there is still enough for an ada-only output (approximated at 1 ada)
         adaOnlyThreshold =
-            N.add collateralAmount (N.fromSafeInt 1000000)
+            N.add targetAmount (N.fromSafeInt 1000000)
 
         -- Helper function to convert the lovelace amount in an output into
         -- a comparable value, safe from JS float overflow.
@@ -340,7 +527,7 @@ collateral localStateUtxos collateralSources collateralAmount =
         highAdaOnlySorted =
             List.sortBy (\( _, { amount } ) -> adaComparableAmount amount.lovelace) highAdaOnly
 
-        availableUtxos =
+        viableUtxos =
             if highAdaOnlyCount >= maxInputCount then
                 highAdaOnlySorted
 
@@ -389,6 +576,6 @@ collateral localStateUtxos collateralSources collateralAmount =
     in
     inOrderedList maxInputCount
         { alreadySelectedUtxos = []
-        , targetAmount = Value.onlyLovelace collateralAmount
-        , availableUtxos = availableUtxos
+        , targetAmount = Value.onlyLovelace targetAmount
+        , availableUtxos = viableUtxos
         }
