@@ -1,10 +1,10 @@
 module Cardano.TxIntent exposing
-    ( TxIntent(..), SpendSource(..)
+    ( finalize, finalizeAdvanced, TxFinalized, TxFinalizationError(..)
+    , TxIntent(..), SpendSource(..)
     , CertificateIntent(..)
     , VoteIntent, ProposalIntent, ActionProposal(..)
     , TxOtherInfo(..)
     , Fee(..)
-    , finalize, finalizeAdvanced, TxFinalized, TxFinalizationError(..)
     , GovernanceState, emptyGovernanceState
     , updateLocalState
     )
@@ -39,12 +39,12 @@ and finally trying to validate it and auto-populate all requirements.
 
 # Code Documentation
 
+@docs finalize, finalizeAdvanced, TxFinalized, TxFinalizationError
 @docs TxIntent, SpendSource
 @docs CertificateIntent
 @docs VoteIntent, ProposalIntent, ActionProposal
 @docs TxOtherInfo
 @docs Fee
-@docs finalize, finalizeAdvanced, TxFinalized, TxFinalizationError
 @docs GovernanceState, emptyGovernanceState
 @docs updateLocalState
 
