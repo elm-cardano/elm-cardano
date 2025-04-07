@@ -2,7 +2,7 @@ port module Main exposing (main)
 
 import Browser
 import Bytes.Comparable as Bytes exposing (Bytes)
-import Cardano exposing (Fee(..), SpendSource(..), TxIntent(..), WitnessSource(..))
+import Cardano exposing (Fee(..), SpendSource(..), TxIntent(..))
 import Cardano.Address as Address exposing (Address, Credential(..), CredentialHash, NetworkId(..))
 import Cardano.Cip30 as Cip30
 import Cardano.CoinSelection as CoinSelection
@@ -13,6 +13,7 @@ import Cardano.Transaction as Transaction exposing (Transaction)
 import Cardano.Uplc as Uplc
 import Cardano.Utxo as Utxo exposing (DatumOption(..), Output, OutputReference, TransactionId)
 import Cardano.Value
+import Cardano.Witness as Witness
 import Dict.Any
 import Html exposing (Html, button, div, text)
 import Html.Attributes exposing (height, src)
@@ -380,7 +381,7 @@ update msg model =
                             { spentInput = OutputReference txId 0
                             , datumWitness = Nothing
                             , plutusScriptWitness =
-                                { script = ( PlutusV3, WitnessByValue ctx.lockScript.compiledCode )
+                                { script = ( PlutusV3, Witness.ByValue ctx.lockScript.compiledCode )
                                 , redeemerData = \_ -> redeemer
                                 , requiredSigners = [ unlockKey ]
                                 }

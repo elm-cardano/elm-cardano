@@ -3,7 +3,7 @@ port module Main exposing (..)
 import Browser
 import Bytes.Comparable as Bytes exposing (Bytes)
 import Bytes.Map as BytesMap
-import Cardano exposing (ScriptWitness(..), SpendSource(..), TxIntent(..), WitnessSource(..))
+import Cardano exposing (SpendSource(..), TxIntent(..))
 import Cardano.Address as Address exposing (Address, Credential(..), CredentialHash, NetworkId(..))
 import Cardano.Cip30 as Cip30
 import Cardano.Data as Data
@@ -13,6 +13,7 @@ import Cardano.Transaction as Tx exposing (Transaction)
 import Cardano.Uplc as Uplc
 import Cardano.Utxo as Utxo exposing (DatumOption(..), Output, OutputReference, TransactionId, outputReferenceToData)
 import Cardano.Value
+import Cardano.Witness as Witness
 import Dict.Any
 import Html exposing (Html, button, div, text)
 import Html.Attributes as HA exposing (height, src)
@@ -346,7 +347,7 @@ update msg model =
                             { spentInput = OutputReference txId 0
                             , datumWitness = Nothing
                             , plutusScriptWitness =
-                                { script = ( PlutusV3, WitnessByValue ctx.lockScript.compiledCode )
+                                { script = ( PlutusV3, Witness.ByValue ctx.lockScript.compiledCode )
                                 , redeemerData = \_ -> Data.Constr Natural.zero []
                                 , requiredSigners = []
                                 }
@@ -463,8 +464,8 @@ makeMintBurnIntent lockScript tokenName forMint =
         { policyId = lockScript.hash
         , assets = BytesMap.singleton tokenName mintQuantity
         , scriptWitness =
-            PlutusWitness
-                { script = ( PlutusV3, WitnessByValue lockScript.compiledCode )
+            Witness.Plutus
+                { script = ( PlutusV3, Witness.ByValue lockScript.compiledCode )
                 , redeemerData =
                     \_ ->
                         if forMint then
