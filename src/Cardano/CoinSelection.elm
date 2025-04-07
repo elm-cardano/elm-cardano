@@ -1,6 +1,7 @@
 module Cardano.CoinSelection exposing
     ( Context, Error(..), Selection, Algorithm
     , largestFirst, inOrderedList
+    , collateral
     )
 
 {-| Module `Cardano.CoinSelection` provides functionality for performing
@@ -18,12 +19,19 @@ selection algorithm as described in CIP2 (<https://cips.cardano.org/cips/cip2/>)
 
 @docs largestFirst, inOrderedList
 
+
+# Collateral
+
+@docs collateral
+
 -}
 
 import Bytes.Comparable exposing (Bytes)
+import Cardano.Address as Address
 import Cardano.MultiAsset as MultiAsset exposing (AssetName, PolicyId)
 import Cardano.Utxo as Utxo exposing (Output, OutputReference)
 import Cardano.Value as Value exposing (Value)
+import Dict.Any
 import Natural as N exposing (Natural)
 
 
@@ -260,3 +268,127 @@ accumOutputsUntilDone ({ maxInputCount, selectedInputCount, accumulatedAmount, t
 
     else
         Ok state
+
+
+{-| Perform collateral selection.
+
+Only UTxOs at the provided whitelist of addresses are viable.
+UTxOs are picked following a prioritization list.
+
+  - First, prioritize UTxOs with only Ada in them,
+    and with >= ? Ada, but lowest amounts prioritized over higher amounts.
+  - Second, prioritize UTxOs with >= ? Ada, and that would cost minimal fees to add,
+    so basically no reference script, no datums, and minimal number of assets.
+  - Third, everything else, prioritized with >= ? Ada first,
+    and sorted by minimal fee cost associated.
+  - Finally, all the rest, sorted by "available" ada amounts (without min Ada),
+    with bigger available amounts prioritized over smaller amounts.
+
+-}
+collateral :
+    Utxo.RefDict Output
+    -> Address.Dict ()
+    -> Natural
+    -> Result Error Selection
+collateral localStateUtxos collateralSources collateralAmount =
+    let
+        -- TODO: max inputs should come from a network parameter
+        maxInputCount =
+            3
+
+        utxosInAllowedAddresses : List ( OutputReference, Output )
+        utxosInAllowedAddresses =
+            Dict.Any.toList localStateUtxos
+                |> List.filter
+                    (\( _, output ) -> Dict.Any.member output.address collateralSources)
+
+        ( adaOnly, notAdaOnly ) =
+            List.partition (\( _, output ) -> Utxo.isAdaOnly output)
+                utxosInAllowedAddresses
+
+        ( assetsOnly, notAssetsOnly ) =
+            List.partition (\( _, output ) -> Utxo.isAssetsOnly output)
+                notAdaOnly
+
+        -- Some threshold to guarantee that after collateral is spent,
+        -- there is still enough for an ada-only output (approximated at 1 ada)
+        adaOnlyThreshold =
+            N.add collateralAmount (N.fromSafeInt 1000000)
+
+        -- Helper function to convert the lovelace amount in an output into
+        -- a comparable value, safe from JS float overflow.
+        -- By removing 5 decimals, we are guaranteed to have amounts
+        -- lower than 450B (45B ada total supply), which is way below JS max safe integer around 2^53
+        adaComparableAmount : Natural -> Float
+        adaComparableAmount lovelace =
+            lovelace
+                |> N.divBy (N.fromSafeInt 100000)
+                |> Maybe.withDefault N.zero
+                |> N.toInt
+                |> toFloat
+
+        -- First, prioritize UTxOs with only Ada in them,
+        -- and with >= ? Ada, but lowest amounts prioritized over higher amounts.
+        ( highAdaOnly, lowAdaOnly ) =
+            List.partition
+                (\( _, { amount } ) -> amount.lovelace |> N.isGreaterThan adaOnlyThreshold)
+                adaOnly
+
+        highAdaOnlyCount =
+            List.length highAdaOnly
+
+        highAdaOnlySorted =
+            List.sortBy (\( _, { amount } ) -> adaComparableAmount amount.lovelace) highAdaOnly
+
+        availableUtxos =
+            if highAdaOnlyCount >= maxInputCount then
+                highAdaOnlySorted
+
+            else
+                -- Second, prioritize UTxOs with >= ? Ada, and that would cost minimal fees to add,
+                -- so basically no reference script, no datums, and minimal number of assets.
+                let
+                    -- Add another ada for priority UTxOs with other tokens
+                    assetOnlyThreshold =
+                        N.add adaOnlyThreshold (N.fromSafeInt 1000000)
+
+                    ( highAssetsOnly, lowAssetsOnly ) =
+                        List.partition
+                            (\( _, { amount } ) -> amount.lovelace |> N.isGreaterThan assetOnlyThreshold)
+                            assetsOnly
+
+                    highAssetsOnlyCount =
+                        List.length highAssetsOnly
+
+                    highAssetsOnlySorted =
+                        List.sortBy (Tuple.second >> Utxo.bytesWidth) highAssetsOnly
+                in
+                if highAdaOnlyCount + highAssetsOnlyCount >= maxInputCount then
+                    List.concat [ highAdaOnlySorted, highAssetsOnlySorted ]
+
+                else
+                    -- Third, everything else, prioritized with >= ? Ada first,
+                    -- and sorted by minimal fee cost associated.
+                    -- Finally, all the rest, sorted by "available" ada amounts (without min Ada),
+                    -- with bigger available amounts prioritized over smaller amounts.
+                    --
+                    -- TODO: Improve, but honestly it’s very low priority,
+                    -- so for now we just sort the rest by free ada (after removing min Ada).
+                    let
+                        freeAdaComparable : Output -> Float
+                        freeAdaComparable output =
+                            adaComparableAmount (Utxo.freeAda output)
+
+                        allOtherUtxos =
+                            List.concat [ lowAdaOnly, lowAssetsOnly, notAssetsOnly ]
+
+                        allOtherUtxosSorted =
+                            List.sortBy (Tuple.second >> freeAdaComparable) allOtherUtxos
+                    in
+                    List.concat [ highAdaOnlySorted, highAssetsOnlySorted, allOtherUtxosSorted ]
+    in
+    inOrderedList maxInputCount
+        { alreadySelectedUtxos = []
+        , targetAmount = Value.onlyLovelace collateralAmount
+        , availableUtxos = availableUtxos
+        }
