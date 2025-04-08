@@ -224,6 +224,8 @@ type TxFinalizationError
     | NotEnoughMinAda String
     | InvalidAddress Address String
     | InvalidStakeAddress StakeAddress String
+    | DuplicateVoters (List { voter : String })
+    | EmptyVotes { voter : String }
     | WitnessError Witness.Error
     | FailedToPerformCoinSelection CoinSelection.Error
     | CollateralSelectionError CoinSelection.Error
@@ -1280,31 +1282,25 @@ processIntents govState localStateUtxos txIntents =
 processBalanced : GovernanceState -> Utxo.RefDict Output -> List TxIntent -> Balanced -> Result TxFinalizationError ProcessedIntents
 processBalanced govState localStateUtxos txIntents { preProcessedIntents, preSelected, preCreated } =
     let
-        spendings : List SpendSource
-        spendings =
-            txIntents
-                |> List.filterMap
-                    (\intent ->
-                        case intent of
-                            Spend source ->
-                                Just source
+        ( ( spendings, mints ), ( withdrawals, allVotes ) ) =
+            List.foldr distributeIntent ( ( [], [] ), ( [], [] ) ) txIntents
 
-                            _ ->
-                                Nothing
-                    )
+        distributeIntent txIntent ( ( spendingsAcc, mintsAcc ), ( withdrawalsAcc, votesAcc ) ) =
+            case txIntent of
+                Spend source ->
+                    ( ( source :: spendingsAcc, mintsAcc ), ( withdrawalsAcc, votesAcc ) )
 
-        withdrawals : List ( StakeAddress, Maybe Witness.Script )
-        withdrawals =
-            txIntents
-                |> List.filterMap
-                    (\intent ->
-                        case intent of
-                            WithdrawRewards { stakeCredential, scriptWitness } ->
-                                Just ( stakeCredential, scriptWitness )
+                MintBurn mint ->
+                    ( ( spendingsAcc, mint :: mintsAcc ), ( withdrawalsAcc, votesAcc ) )
 
-                            _ ->
-                                Nothing
-                    )
+                WithdrawRewards { stakeCredential, scriptWitness } ->
+                    ( ( spendingsAcc, mintsAcc ), ( ( stakeCredential, scriptWitness ) :: withdrawalsAcc, votesAcc ) )
+
+                Vote voter votes ->
+                    ( ( spendingsAcc, mintsAcc ), ( withdrawalsAcc, ( voter, votes ) :: votesAcc ) )
+
+                _ ->
+                    ( ( spendingsAcc, mintsAcc ), ( withdrawalsAcc, votesAcc ) )
 
         totalMintedAndBurned : MultiAsset Integer
         totalMintedAndBurned =
@@ -1335,6 +1331,7 @@ processBalanced govState localStateUtxos txIntents { preProcessedIntents, preSel
         |> Result.mapError NotEnoughMinAda
         |> Result.andThen (\_ -> validateSpentOutputs localStateUtxos spendings)
         |> Result.andThen (\_ -> validateWithdrawals localStateUtxos withdrawals)
+        |> Result.andThen (\_ -> validateVotes localStateUtxos allVotes)
         |> Result.andThen (\_ -> validateGuardrails localStateUtxos govState preProcessedIntents)
         |> Result.map
             (\allPlutusScriptSources ->
@@ -1483,6 +1480,62 @@ validMinAdaPerOutput outputs =
 
                 Err err ->
                     Err err
+
+
+{-| Do as many checks as we can on user-provided votes.
+
+In particular, check that:
+
+  - there is no duplicate voter
+  - there is no empty list of votes
+  - all voter witnesses are valid
+
+-}
+validateVotes : Utxo.RefDict Output -> List ( Witness.Voter, List VoteIntent ) -> Result TxFinalizationError ()
+validateVotes localStateUtxos votes =
+    let
+        voterIds =
+            List.map (Tuple.first >> voterWitnessToBech32) votes
+
+        duplicateVoters =
+            List.Extra.frequencies voterIds
+                |> List.filter (\( _, freq ) -> freq > 1)
+                |> List.map Tuple.first
+                |> List.map (\v -> { voter = v })
+    in
+    if not (List.isEmpty duplicateVoters) then
+        Err <| DuplicateVoters duplicateVoters
+
+    else
+        List.map (checkVoter localStateUtxos) votes
+            |> Result.Extra.combine
+            |> Result.map (\_ -> ())
+
+
+checkVoter : Utxo.RefDict Output -> ( Witness.Voter, List VoteIntent ) -> Result TxFinalizationError ()
+checkVoter localStateUtxos ( voterWitness, votes ) =
+    if List.isEmpty votes then
+        Err <| EmptyVotes { voter = voterWitnessToBech32 voterWitness }
+
+    else
+        case voterWitness of
+            Witness.WithCommitteeHotCred (Witness.WithScript hash scriptWitness) ->
+                Witness.checkScript localStateUtxos hash scriptWitness
+                    |> Result.mapError WitnessError
+
+            Witness.WithDrepCred (Witness.WithScript hash scriptWitness) ->
+                Witness.checkScript localStateUtxos hash scriptWitness
+                    |> Result.mapError WitnessError
+
+            _ ->
+                Ok ()
+
+
+voterWitnessToBech32 : Witness.Voter -> String
+voterWitnessToBech32 voterWitness =
+    Witness.toVoter voterWitness
+        |> Gov.voterToId
+        |> Gov.idToBech32
 
 
 {-| Do as many checks as we can on user-provided withdrawals.

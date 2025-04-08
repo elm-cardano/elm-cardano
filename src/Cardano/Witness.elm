@@ -1,22 +1,23 @@
 module Cardano.Witness exposing
-    ( Voter(..), Credential(..), Script(..), NativeScript, PlutusScript, Source(..), Error(..)
+    ( Voter(..), toVoter, Credential(..), toCredential, Script(..), NativeScript, PlutusScript, Source(..), Error(..)
     , credentialIsPlutusScript, mapSource, toHex, sourceToResult, extractRef
-    , checkDatum, checkNativeScript, checkPlutusScript
+    , checkDatum, checkScript, checkNativeScript, checkPlutusScript
     )
 
 {-| Handling witnesses for Tx building intents.
 
-@docs Voter, Credential, Script, NativeScript, PlutusScript, Source, Error
+@docs Voter, toVoter, Credential, toCredential, Script, NativeScript, PlutusScript, Source, Error
 
 @docs credentialIsPlutusScript, mapSource, toHex, sourceToResult, extractRef
 
-@docs checkDatum, checkNativeScript, checkPlutusScript
+@docs checkDatum, checkScript, checkNativeScript, checkPlutusScript
 
 -}
 
 import Bytes.Comparable as Bytes exposing (Bytes)
-import Cardano.Address exposing (CredentialHash)
+import Cardano.Address as Address exposing (CredentialHash)
 import Cardano.Data as Data exposing (Data)
+import Cardano.Gov as Gov
 import Cardano.Script as Script exposing (ScriptCbor)
 import Cardano.TxContext exposing (TxContext)
 import Cardano.Utxo as Utxo exposing (DatumOption(..), Output, OutputReference)
@@ -34,6 +35,21 @@ type Voter
     | WithPoolCred (Bytes CredentialHash)
 
 
+{-| Helper function to convert a voter to a Gov.Voter.
+-}
+toVoter : Voter -> Gov.Voter
+toVoter voter =
+    case voter of
+        WithCommitteeHotCred cred ->
+            Gov.VoterCommitteeHotCred <| toCredential cred
+
+        WithDrepCred cred ->
+            Gov.VoterDrepCred <| toCredential cred
+
+        WithPoolCred hash ->
+            Gov.VoterPoolId hash
+
+
 {-| The type of credential to provide.
 
 It can either be a key, typically from a wallet,
@@ -43,6 +59,18 @@ a native script, or a plutus script.
 type Credential
     = WithKey (Bytes CredentialHash)
     | WithScript (Bytes CredentialHash) Script
+
+
+{-| Helper function to convert a credential witness to an Address.Credential.
+-}
+toCredential : Credential -> Address.Credential
+toCredential cred =
+    case cred of
+        WithKey hash ->
+            Address.VKeyHash hash
+
+        WithScript hash _ ->
+            Address.ScriptHash hash
 
 
 {-| True if the this is a credential witness for a Plutus script.
@@ -170,6 +198,18 @@ type Error
     | ReferenceOutputsMissingFromLocalState (List OutputReference)
     | MissingReferenceScript OutputReference
     | InvalidScriptRef OutputReference (Bytes Script.Script) String
+
+
+{-| Check the witness of a script.
+-}
+checkScript : Utxo.RefDict Output -> Bytes CredentialHash -> Script -> Result Error ()
+checkScript localStateUtxos expectedHash script =
+    case script of
+        Native nativeScript ->
+            checkNativeScript localStateUtxos expectedHash nativeScript
+
+        Plutus plutusScript ->
+            checkPlutusScript localStateUtxos expectedHash plutusScript
 
 
 {-| Check the witness of a native script. Both the script hash and the validity of expected signers.
