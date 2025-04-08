@@ -219,7 +219,7 @@ type alias TxFinalized =
 -}
 type TxFinalizationError
     = UnableToGuessFeeSource
-    | UnbalancedIntents String
+    | UnbalancedIntents { inputTotal : Value, outputTotal : Value, extraneousInput : Value, extraneousOutput : Value } String
     | InsufficientManualFee { declared : Natural, computed : Natural }
     | NotEnoughMinAda String
     | InvalidAddress Address String
@@ -232,6 +232,155 @@ type TxFinalizationError
     | UplcVmError String
     | GovProposalsNotSupportedInSimpleFinalize
     | FailurePleaseReportToElmCardano String
+
+
+{-| Type to represent the successful output after the Tx intents balance has been checked.
+-}
+type alias Balanced =
+    { preProcessedIntents : PreProcessedIntents
+    , preSelected : { sum : Value, inputs : Utxo.RefDict (Maybe (TxContext -> Data)) }
+    , preCreated : TxContext -> { sum : Value, outputs : List Output }
+    }
+
+
+{-| Check that Tx intents are balanced, and transitively that no reference is missing from the local state UTxOs.
+-}
+checkBalance : Utxo.RefDict Output -> List TxIntent -> Result TxFinalizationError Balanced
+checkBalance localStateUtxos txIntents =
+    let
+        preProcessedIntents =
+            -- A bit too much work, but let’s reuse and not optimize
+            preProcessIntents txIntents
+
+        -- Accumulate all output references from inputs and witnesses.
+        allOutputReferencesInIntents : Utxo.RefDict ()
+        allOutputReferencesInIntents =
+            List.concat
+                [ List.map .input preProcessedIntents.preSelected
+                , preProcessedIntents.guaranteedUtxos
+                , List.filterMap Witness.extractRef preProcessedIntents.nativeScriptSources
+                , List.map (\( _, source ) -> source) preProcessedIntents.plutusScriptSources
+                    |> List.filterMap Witness.extractRef
+                , List.filterMap Witness.extractRef preProcessedIntents.datumSources
+                ]
+                |> List.map (\ref -> ( ref, () ))
+                |> Utxo.refDictFromList
+
+        -- Check that all referenced inputs are present in the local state
+        absentOutputReferencesInLocalState : Utxo.RefDict ()
+        absentOutputReferencesInLocalState =
+            Dict.Any.diff allOutputReferencesInIntents
+                (Dict.Any.map (\_ _ -> ()) localStateUtxos)
+
+        -- Extract total minted value and total burned value
+        splitMintsBurns =
+            List.map (\m -> ( m.policyId, MultiAsset.balance m.assets )) preProcessedIntents.mints
+
+        totalMintedValue =
+            List.foldl (\( p, { minted } ) -> Value.addTokens (Map.singleton p minted)) Value.zero splitMintsBurns
+
+        totalBurnedValue =
+            List.foldl (\( p, { burned } ) -> Value.addTokens (Map.singleton p burned)) Value.zero splitMintsBurns
+
+        -- Extract total ada amount withdrawn
+        totalWithdrawalAmount =
+            List.foldl (\w acc -> Natural.add w.amount acc) Natural.zero preProcessedIntents.withdrawals
+
+        -- Retrieve the ada and tokens amount at a given output reference
+        getValueFromRef : OutputReference -> Value
+        getValueFromRef ref =
+            Dict.Any.get ref localStateUtxos
+                |> Maybe.map .amount
+                |> Maybe.withDefault Value.zero
+
+        -- Extract value thanks to input refs
+        -- Also add minted tokens and withdrawals to preSelected
+        preSelected =
+            preProcessedIntents.preSelected
+                |> List.foldl (\s -> addPreSelectedInput s.input (getValueFromRef s.input) s.redeemer)
+                    { sum = Value.add totalMintedValue (Value.onlyLovelace totalWithdrawalAmount)
+                    , inputs = Utxo.emptyRefDict
+                    }
+
+        -- Add burned tokens to preCreated
+        preCreated =
+            \txContext ->
+                let
+                    { sum, outputs } =
+                        preProcessedIntents.preCreated txContext
+                in
+                { sum = Value.add sum totalBurnedValue, outputs = outputs }
+
+        preCreatedOutputs =
+            preCreated TxContext.new
+
+        -- Compute total inputs and outputs to check the Tx balance
+        totalInput =
+            Dict.Any.foldl (\_ -> Value.add) preSelected.sum preProcessedIntents.freeInputs
+                |> Value.add (Value.onlyLovelace preProcessedIntents.totalRefund)
+
+        totalOutput =
+            Dict.Any.foldl (\_ -> Value.add) preCreatedOutputs.sum preProcessedIntents.freeOutputs
+                |> Value.add (Value.onlyLovelace preProcessedIntents.totalDeposit)
+    in
+    if not <| Dict.Any.isEmpty absentOutputReferencesInLocalState then
+        Err <| WitnessError <| Witness.ReferenceOutputsMissingFromLocalState (Dict.Any.keys absentOutputReferencesInLocalState)
+
+    else if totalInput /= totalOutput then
+        let
+            extraneousInput =
+                Value.subtract totalInput totalOutput
+
+            extraneousOutput =
+                Value.subtract totalOutput totalInput
+
+            errorMessage =
+                let
+                    indent spaces str =
+                        String.repeat spaces " " ++ str
+
+                    missingOutputMsg =
+                        case Value.toMultilineString extraneousInput of
+                            [ adaStr ] ->
+                                "Missing lovelace output: " ++ adaStr
+
+                            multilineValue ->
+                                "Missing value output:\n"
+                                    ++ (String.join "\n" <| List.map (indent 3) multilineValue)
+
+                    missingInputMsg =
+                        case Value.toMultilineString extraneousOutput of
+                            [ adaStr ] ->
+                                "Missing lovelace input: " ++ adaStr
+
+                            multilineValue ->
+                                "Missing value input:\n"
+                                    ++ (String.join "\n" <| List.map (indent 3) multilineValue)
+                in
+                if extraneousOutput == Value.zero then
+                    missingOutputMsg
+
+                else if extraneousInput == Value.zero then
+                    missingInputMsg
+
+                else
+                    String.join "\n" [ missingInputMsg, missingOutputMsg ]
+        in
+        Err <|
+            UnbalancedIntents
+                { inputTotal = totalInput
+                , outputTotal = totalOutput
+                , extraneousInput = extraneousInput
+                , extraneousOutput = extraneousOutput
+                }
+                errorMessage
+
+    else
+        Ok
+            { preProcessedIntents = preProcessedIntents
+            , preSelected = preSelected
+            , preCreated = preCreated
+            }
 
 
 {-| Finalize a transaction before signing and submitting it.
@@ -1098,236 +1247,127 @@ type alias ProcessedIntents =
 -}
 processIntents : GovernanceState -> Utxo.RefDict Output -> List TxIntent -> Result TxFinalizationError ProcessedIntents
 processIntents govState localStateUtxos txIntents =
+    checkBalance localStateUtxos txIntents
+        |> Result.andThen (processBalanced govState localStateUtxos txIntents)
+
+
+{-| Continue processing intents after the balance has already been checked.
+-}
+processBalanced : GovernanceState -> Utxo.RefDict Output -> List TxIntent -> Balanced -> Result TxFinalizationError ProcessedIntents
+processBalanced govState localStateUtxos txIntents { preProcessedIntents, preSelected, preCreated } =
     let
-        preProcessedIntents =
-            preProcessIntents txIntents
+        spendings : List SpendSource
+        spendings =
+            txIntents
+                |> List.filterMap
+                    (\intent ->
+                        case intent of
+                            Spend source ->
+                                Just source
 
-        -- Put all votes into a VoterDict.
-        -- WARNING: if a voter is present multiple times, it will be overwritten.
-        voterDict =
-            preProcessedIntents.votes
-                |> List.map (\{ voter, votes, redeemer } -> ( voter, { votes = votes, redeemer = redeemer } ))
-                |> Gov.voterDictFromList
+                            _ ->
+                                Nothing
+                    )
 
-        -- Helper to check if a given proposal requires the guardrails script execution
-        requiresGuardrails proposalIntent =
-            case proposalIntent.govAction of
-                ParameterChange _ ->
-                    True
+        withdrawals : List ( StakeAddress, Maybe Witness.Script )
+        withdrawals =
+            txIntents
+                |> List.filterMap
+                    (\intent ->
+                        case intent of
+                            WithdrawRewards { stakeCredential, scriptWitness } ->
+                                Just ( stakeCredential, scriptWitness )
 
-                TreasuryWithdrawals _ ->
-                    True
+                            _ ->
+                                Nothing
+                    )
 
-                _ ->
-                    False
+        totalMintedAndBurned : MultiAsset Integer
+        totalMintedAndBurned =
+            List.map (\m -> Map.singleton m.policyId m.assets) preProcessedIntents.mints
+                |> List.foldl MultiAsset.mintAdd MultiAsset.empty
+                |> MultiAsset.normalize Integer.isZero
 
-        -- If there is any proposal requiring the guardrails script, update the plutus script sources
-        plutusScriptSources =
-            if List.any requiresGuardrails preProcessedIntents.proposalIntents then
-                case govState.guardrailsScript of
-                    Just { plutusVersion, scriptWitness } ->
-                        ( plutusVersion, scriptWitness ) :: preProcessedIntents.plutusScriptSources
+        guaranteedUtxos : Address.Dict (List ( OutputReference, Output ))
+        guaranteedUtxos =
+            preProcessedIntents.guaranteedUtxos
+                |> List.foldl
+                    (\ref acc ->
+                        Dict.Any.get ref localStateUtxos
+                            |> Maybe.map
+                                (\output ->
+                                    case Dict.Any.get output.address acc of
+                                        Nothing ->
+                                            Dict.Any.insert output.address [ ( ref, output ) ] acc
 
-                    Nothing ->
-                        preProcessedIntents.plutusScriptSources
-
-            else
-                preProcessedIntents.plutusScriptSources
-
-        -- Accumulate all output references from inputs and witnesses.
-        allOutputReferencesInIntents : Utxo.RefDict ()
-        allOutputReferencesInIntents =
-            List.concat
-                [ List.map .input preProcessedIntents.preSelected
-                , preProcessedIntents.guaranteedUtxos
-                , List.filterMap Witness.extractRef preProcessedIntents.nativeScriptSources
-                , List.map (\( _, source ) -> source) plutusScriptSources
-                    |> List.filterMap Witness.extractRef
-                , List.filterMap Witness.extractRef preProcessedIntents.datumSources
-                ]
-                |> List.map (\ref -> ( ref, () ))
-                |> Utxo.refDictFromList
-
-        -- Check that all referenced inputs are present in the local state
-        absentOutputReferencesInLocalState : Utxo.RefDict ()
-        absentOutputReferencesInLocalState =
-            Dict.Any.diff allOutputReferencesInIntents
-                (Dict.Any.map (\_ _ -> ()) localStateUtxos)
-
-        -- Extract total minted value and total burned value
-        splitMintsBurns =
-            List.map (\m -> ( m.policyId, MultiAsset.balance m.assets )) preProcessedIntents.mints
-
-        totalMintedValue =
-            List.foldl (\( p, { minted } ) -> Value.addTokens (Map.singleton p minted)) Value.zero splitMintsBurns
-
-        totalBurnedValue =
-            List.foldl (\( p, { burned } ) -> Value.addTokens (Map.singleton p burned)) Value.zero splitMintsBurns
-
-        -- Extract total ada amount withdrawn
-        totalWithdrawalAmount =
-            List.foldl (\w acc -> Natural.add w.amount acc) Natural.zero preProcessedIntents.withdrawals
-
-        -- Retrieve the ada and tokens amount at a given output reference
-        getValueFromRef : OutputReference -> Value
-        getValueFromRef ref =
-            Dict.Any.get ref localStateUtxos
-                |> Maybe.map .amount
-                |> Maybe.withDefault Value.zero
-
-        -- Extract value thanks to input refs
-        -- Also add minted tokens and withdrawals to preSelected
-        preSelected =
-            preProcessedIntents.preSelected
-                |> List.foldl (\s -> addPreSelectedInput s.input (getValueFromRef s.input) s.redeemer)
-                    { sum = Value.add totalMintedValue (Value.onlyLovelace totalWithdrawalAmount)
-                    , inputs = Utxo.emptyRefDict
-                    }
-
-        -- Add burned tokens to preCreated
-        preCreated =
-            \txContext ->
-                let
-                    { sum, outputs } =
-                        preProcessedIntents.preCreated txContext
-                in
-                { sum = Value.add sum totalBurnedValue, outputs = outputs }
-
-        preCreatedOutputs =
-            preCreated TxContext.new
-
-        -- Compute total inputs and outputs to check the Tx balance
-        totalInput =
-            Dict.Any.foldl (\_ -> Value.add) preSelected.sum preProcessedIntents.freeInputs
-                |> Value.add (Value.onlyLovelace preProcessedIntents.totalRefund)
-
-        totalOutput =
-            Dict.Any.foldl (\_ -> Value.add) preCreatedOutputs.sum preProcessedIntents.freeOutputs
-                |> Value.add (Value.onlyLovelace preProcessedIntents.totalDeposit)
-    in
-    if not <| Dict.Any.isEmpty absentOutputReferencesInLocalState then
-        Err <| WitnessError <| Witness.ReferenceOutputsMissingFromLocalState (Dict.Any.keys absentOutputReferencesInLocalState)
-
-    else if totalInput /= totalOutput then
-        let
-            _ =
-                Debug.log "totalInput" totalInput
-
-            _ =
-                Debug.log "totalOutput" totalOutput
-        in
-        Err <| UnbalancedIntents "Tx is not balanced.\n"
-
-    else
-        let
-            spendings : List SpendSource
-            spendings =
-                txIntents
-                    |> List.filterMap
-                        (\intent ->
-                            case intent of
-                                Spend source ->
-                                    Just source
-
-                                _ ->
-                                    Nothing
-                        )
-
-            withdrawals : List ( StakeAddress, Maybe Witness.Script )
-            withdrawals =
-                txIntents
-                    |> List.filterMap
-                        (\intent ->
-                            case intent of
-                                WithdrawRewards { stakeCredential, scriptWitness } ->
-                                    Just ( stakeCredential, scriptWitness )
-
-                                _ ->
-                                    Nothing
-                        )
-
-            totalMintedAndBurned : MultiAsset Integer
-            totalMintedAndBurned =
-                List.map (\m -> Map.singleton m.policyId m.assets) preProcessedIntents.mints
-                    |> List.foldl MultiAsset.mintAdd MultiAsset.empty
-                    |> MultiAsset.normalize Integer.isZero
-
-            guaranteedUtxos : Address.Dict (List ( OutputReference, Output ))
-            guaranteedUtxos =
-                preProcessedIntents.guaranteedUtxos
-                    |> List.foldl
-                        (\ref acc ->
-                            Dict.Any.get ref localStateUtxos
-                                |> Maybe.map
-                                    (\output ->
-                                        case Dict.Any.get output.address acc of
-                                            Nothing ->
-                                                Dict.Any.insert output.address [ ( ref, output ) ] acc
-
-                                            Just utxos ->
-                                                Dict.Any.insert output.address (( ref, output ) :: utxos) acc
-                                    )
-                                |> Maybe.withDefault acc
-                        )
-                        Address.emptyDict
-        in
-        validMinAdaPerOutput preCreatedOutputs.outputs
-            |> Result.mapError NotEnoughMinAda
-            |> Result.andThen (\_ -> validateSpentOutputs localStateUtxos spendings)
-            |> Result.andThen (\_ -> validateWithdrawals localStateUtxos withdrawals)
-            |> Result.map
-                (\_ ->
-                    let
-                        -- Dedup required signers
-                        requiredSigners =
-                            List.concat preProcessedIntents.requiredSigners
-                                |> List.map (\signer -> ( signer, () ))
-                                |> Map.fromList
-                                |> Map.keys
-
-                        -- Dedup expected signers
-                        expectedSigners =
-                            List.concat preProcessedIntents.expectedSigners
-                                |> List.map (\signer -> ( signer, () ))
-                                |> Map.fromList
-                                |> Map.keys
-                    in
-                    { freeInputs = preProcessedIntents.freeInputs
-                    , freeOutputs = preProcessedIntents.freeOutputs
-                    , guaranteedUtxos = guaranteedUtxos
-                    , preSelected = preSelected
-                    , preCreated = preCreated
-
-                    -- TODO: an improvement would consist in fetching the referenced from the local state utxos,
-                    -- and extract the script values, to even remove duplicates both in ref and values.
-                    , nativeScriptSources = List.Extra.uniqueBy (Witness.toHex Script.encodeNativeScript) preProcessedIntents.nativeScriptSources
-                    , plutusScriptSources = List.Extra.uniqueBy (Tuple.second >> Witness.toHex Bytes.toCbor) plutusScriptSources
-                    , datumSources = List.Extra.uniqueBy (Witness.toHex Data.toCbor) preProcessedIntents.datumSources
-                    , expectedSigners = expectedSigners
-                    , requiredSigners = requiredSigners
-                    , totalMinted = totalMintedAndBurned
-                    , mintRedeemers =
-                        List.map (\m -> ( m.policyId, m.redeemer )) preProcessedIntents.mints
-                            |> Map.fromList
-                    , withdrawals =
-                        List.map (\w -> ( w.stakeAddress, { amount = w.amount, redeemer = w.redeemer } )) preProcessedIntents.withdrawals
-                            |> Address.stakeDictFromList
-                    , certificates = preProcessedIntents.certificates
-                    , proposals =
-                        preProcessedIntents.proposalIntents
-                            |> List.map
-                                (\{ govAction, offchainInfo, deposit, depositReturnAccount } ->
-                                    ( { deposit = deposit
-                                      , depositReturnAccount = depositReturnAccount
-                                      , anchor = offchainInfo
-                                      , govAction = actionFromIntent govState govAction
-                                      }
-                                    , proposalRedeemer govAction
-                                    )
+                                        Just utxos ->
+                                            Dict.Any.insert output.address (( ref, output ) :: utxos) acc
                                 )
-                    , votes = voterDict
-                    }
-                )
+                            |> Maybe.withDefault acc
+                    )
+                    Address.emptyDict
+    in
+    validMinAdaPerOutput (preCreated TxContext.new).outputs
+        |> Result.mapError NotEnoughMinAda
+        |> Result.andThen (\_ -> validateSpentOutputs localStateUtxos spendings)
+        |> Result.andThen (\_ -> validateWithdrawals localStateUtxos withdrawals)
+        |> Result.andThen (\_ -> validateGuardrails localStateUtxos govState preProcessedIntents)
+        |> Result.map
+            (\allPlutusScriptSources ->
+                let
+                    -- Dedup required signers
+                    requiredSigners =
+                        List.concat preProcessedIntents.requiredSigners
+                            |> List.map (\signer -> ( signer, () ))
+                            |> Map.fromList
+                            |> Map.keys
+
+                    -- Dedup expected signers
+                    expectedSigners =
+                        List.concat preProcessedIntents.expectedSigners
+                            |> List.map (\signer -> ( signer, () ))
+                            |> Map.fromList
+                            |> Map.keys
+                in
+                { freeInputs = preProcessedIntents.freeInputs
+                , freeOutputs = preProcessedIntents.freeOutputs
+                , guaranteedUtxos = guaranteedUtxos
+                , preSelected = preSelected
+                , preCreated = preCreated
+
+                -- TODO: an improvement would consist in fetching the referenced from the local state utxos,
+                -- and extract the script values, to even remove duplicates both in ref and values.
+                , nativeScriptSources = List.Extra.uniqueBy (Witness.toHex Script.encodeNativeScript) preProcessedIntents.nativeScriptSources
+                , plutusScriptSources = List.Extra.uniqueBy (Tuple.second >> Witness.toHex Bytes.toCbor) allPlutusScriptSources
+                , datumSources = List.Extra.uniqueBy (Witness.toHex Data.toCbor) preProcessedIntents.datumSources
+                , expectedSigners = expectedSigners
+                , requiredSigners = requiredSigners
+                , totalMinted = totalMintedAndBurned
+                , mintRedeemers =
+                    List.map (\m -> ( m.policyId, m.redeemer )) preProcessedIntents.mints
+                        |> Map.fromList
+                , withdrawals =
+                    List.map (\w -> ( w.stakeAddress, { amount = w.amount, redeemer = w.redeemer } )) preProcessedIntents.withdrawals
+                        |> Address.stakeDictFromList
+                , certificates = preProcessedIntents.certificates
+                , proposals =
+                    preProcessedIntents.proposalIntents
+                        |> List.map
+                            (\{ govAction, offchainInfo, deposit, depositReturnAccount } ->
+                                ( { deposit = deposit
+                                  , depositReturnAccount = depositReturnAccount
+                                  , anchor = offchainInfo
+                                  , govAction = actionFromIntent govState govAction
+                                  }
+                                , proposalRedeemer govAction
+                                )
+                            )
+                , votes =
+                    preProcessedIntents.votes
+                        |> List.map (\{ voter, votes, redeemer } -> ( voter, { votes = votes, redeemer = redeemer } ))
+                        |> Gov.voterDictFromList
+                }
+            )
 
 
 {-| Helper function to convert an action proposal intent into an actual one.
@@ -1575,6 +1615,45 @@ checkScriptAddressSpending address =
 
                 ScriptHash scriptHash ->
                     Ok scriptHash
+
+
+{-| Helper function that check the witness of the guardrails script and update the list of Plutus scripts if needed.
+-}
+validateGuardrails : Utxo.RefDict Output -> GovernanceState -> PreProcessedIntents -> Result TxFinalizationError (List ( PlutusVersion, Witness.Source (Bytes ScriptCbor) ))
+validateGuardrails localStateUtxos govState preProcessedIntents =
+    -- If there is any proposal requiring the guardrails script, update the plutus script sources
+    let
+        -- Helper to check if a given proposal requires the guardrails script execution
+        requiresGuardrails proposalIntent =
+            case proposalIntent.govAction of
+                ParameterChange _ ->
+                    True
+
+                TreasuryWithdrawals _ ->
+                    True
+
+                _ ->
+                    False
+    in
+    if List.any requiresGuardrails preProcessedIntents.proposalIntents then
+        case govState.guardrailsScript of
+            Just { policyId, plutusVersion, scriptWitness } ->
+                let
+                    guardrailsDummyPlutusScriptWitness =
+                        { script = ( plutusVersion, scriptWitness )
+                        , redeemerData = \_ -> Data.List []
+                        , requiredSigners = []
+                        }
+                in
+                Witness.checkPlutusScript localStateUtxos policyId guardrailsDummyPlutusScriptWitness
+                    |> Result.mapError WitnessError
+                    |> Result.map (\_ -> ( plutusVersion, scriptWitness ) :: preProcessedIntents.plutusScriptSources)
+
+            Nothing ->
+                Ok preProcessedIntents.plutusScriptSources
+
+    else
+        Ok preProcessedIntents.plutusScriptSources
 
 
 type alias ProcessedOtherInfo =

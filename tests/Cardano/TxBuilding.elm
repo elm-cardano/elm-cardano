@@ -944,7 +944,7 @@ failTxBuilding =
             }
             (\error ->
                 case error of
-                    UnbalancedIntents _ ->
+                    UnbalancedIntents _ _ ->
                         Expect.pass
 
                     _ ->
@@ -960,7 +960,7 @@ failTxBuilding =
             }
             (\error ->
                 case error of
-                    UnbalancedIntents _ ->
+                    UnbalancedIntents _ _ ->
                         Expect.pass
 
                     _ ->
