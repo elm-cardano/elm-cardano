@@ -1,5 +1,5 @@
 module Cardano.TxIntent exposing
-    ( finalize, finalizeAdvanced, TxFinalized, TxFinalizationError(..)
+    ( balance, finalize, finalizeAdvanced, TxFinalized, TxFinalizationError(..)
     , TxIntent(..), SpendSource(..)
     , CertificateIntent(..)
     , VoteIntent, ProposalIntent, ActionProposal(..)
@@ -39,7 +39,7 @@ and finally trying to validate it and auto-populate all requirements.
 
 # Code Documentation
 
-@docs finalize, finalizeAdvanced, TxFinalized, TxFinalizationError
+@docs balance, finalize, finalizeAdvanced, TxFinalized, TxFinalizationError
 @docs TxIntent, SpendSource
 @docs CertificateIntent
 @docs VoteIntent, ProposalIntent, ActionProposal
@@ -232,6 +232,30 @@ type TxFinalizationError
     | UplcVmError String
     | GovProposalsNotSupportedInSimpleFinalize
     | FailurePleaseReportToElmCardano String
+
+
+{-| Attempt to balance a transaction with a provided address.
+
+All the missing value from inputs and/or outputs is compensated
+by adding new intents with the provided address as source and/or destination.
+
+The function may fail while verifying that all references are present in the local state UTxOs.
+
+-}
+balance : Utxo.RefDict Output -> Address -> List TxIntent -> Result TxFinalizationError (List TxIntent)
+balance localStateUtxos address txIntents =
+    case checkBalance localStateUtxos txIntents of
+        Err (UnbalancedIntents { extraneousInput, extraneousOutput } _) ->
+            Ok <|
+                SendTo address extraneousInput
+                    :: Spend (FromWallet { address = address, value = extraneousOutput, guaranteedUtxos = [] })
+                    :: txIntents
+
+        Err error ->
+            Err error
+
+        Ok _ ->
+            Ok txIntents
 
 
 {-| Type to represent the successful output after the Tx intents balance has been checked.
