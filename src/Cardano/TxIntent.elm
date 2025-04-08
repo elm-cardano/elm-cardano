@@ -226,6 +226,8 @@ type TxFinalizationError
     | InvalidStakeAddress StakeAddress String
     | DuplicateVoters (List { voter : String })
     | EmptyVotes { voter : String }
+    | DuplicateMints (List { policyId : String })
+    | EmptyMint { policyId : String }
     | WitnessError Witness.Error
     | FailedToPerformCoinSelection CoinSelection.Error
     | CollateralSelectionError CoinSelection.Error
@@ -1330,6 +1332,7 @@ processBalanced govState localStateUtxos txIntents { preProcessedIntents, preSel
     validMinAdaPerOutput (preCreated TxContext.new).outputs
         |> Result.mapError NotEnoughMinAda
         |> Result.andThen (\_ -> validateSpentOutputs localStateUtxos spendings)
+        |> Result.andThen (\_ -> validateMints localStateUtxos mints)
         |> Result.andThen (\_ -> validateWithdrawals localStateUtxos withdrawals)
         |> Result.andThen (\_ -> validateVotes localStateUtxos allVotes)
         |> Result.andThen (\_ -> validateGuardrails localStateUtxos govState preProcessedIntents)
@@ -1480,6 +1483,50 @@ validMinAdaPerOutput outputs =
 
                 Err err ->
                     Err err
+
+
+{-| Do as many checks as we can on user-provided mints and burns.
+
+In particular, check that:
+
+  - there is no duplicate policy ID
+  - there is no empty mint
+  - all witnesses are valid
+
+-}
+validateMints : Utxo.RefDict Output -> List { policyId : Bytes CredentialHash, assets : BytesMap AssetName Integer, scriptWitness : Witness.Script } -> Result TxFinalizationError ()
+validateMints localStateUtxos mints =
+    let
+        policyIds =
+            List.map (\m -> Bytes.toHex m.policyId) mints
+
+        duplicatePolicyIds =
+            List.Extra.frequencies policyIds
+                |> List.filter (\( _, freq ) -> freq > 1)
+                |> List.map Tuple.first
+                |> List.map (\p -> { policyId = p })
+    in
+    if not (List.isEmpty duplicatePolicyIds) then
+        Err <| DuplicateMints duplicatePolicyIds
+
+    else
+        List.map (checkMint localStateUtxos) mints
+            |> Result.Extra.combine
+            |> Result.map (\_ -> ())
+
+
+checkMint : Utxo.RefDict Output -> { policyId : Bytes CredentialHash, assets : BytesMap AssetName Integer, scriptWitness : Witness.Script } -> Result TxFinalizationError ()
+checkMint localStateUtxos { policyId, assets, scriptWitness } =
+    let
+        normalizedAssets =
+            Map.filter (not << Integer.isZero) assets
+    in
+    if Map.isEmpty normalizedAssets then
+        Err <| EmptyMint { policyId = Bytes.toHex policyId }
+
+    else
+        Witness.checkScript localStateUtxos policyId scriptWitness
+            |> Result.mapError WitnessError
 
 
 {-| Do as many checks as we can on user-provided votes.
