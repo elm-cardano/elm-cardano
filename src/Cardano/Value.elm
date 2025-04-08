@@ -2,6 +2,7 @@ module Cardano.Value exposing
     ( Value, zero, onlyLovelace, onlyToken
     , add, addTokens, subtract, atLeast, sum, normalize, compare
     , encode, fromCbor
+    , toMultilineString
     )
 
 {-| Handling Cardano values.
@@ -11,6 +12,8 @@ module Cardano.Value exposing
 @docs add, addTokens, subtract, atLeast, sum, normalize, compare
 
 @docs encode, fromCbor
+
+@docs toMultilineString
 
 -}
 
@@ -156,3 +159,20 @@ fromCbor =
                 >> D.elem DE.natural
                 >> D.elem MultiAsset.coinsFromCbor
         ]
+
+
+{-| Helper function to display a `Value`.
+-}
+toMultilineString : Value -> List String
+toMultilineString { lovelace, assets } =
+    let
+        indent spaces str =
+            String.repeat spaces " " ++ str
+    in
+    if MultiAsset.isEmpty assets then
+        [ "₳ " ++ Natural.toString lovelace ]
+
+    else
+        "with native assets:"
+            :: ("   ₳ " ++ Natural.toString lovelace)
+            :: List.map (indent 3) (MultiAsset.toMultilineString Natural.toString assets)
