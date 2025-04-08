@@ -424,8 +424,7 @@ finalizeTx ctx mPrevTxId intents =
                     Locking
 
         txAttempt =
-            intents
-                |> TxIntent.finalize ctx.localStateUtxos []
+            TxIntent.finalize ctx.localStateUtxos [] intents
     in
     case txAttempt of
         Ok { tx } ->
@@ -442,7 +441,7 @@ finalizeTx ctx mPrevTxId intents =
         Err err ->
             ( case mPrevTxId of
                 Nothing ->
-                    ParametersSet ctx { errors = Debug.toString err }
+                    ParametersSet ctx { errors = TxIntent.errorToString err }
 
                 Just txId ->
                     TxSubmitted ctx action { txId = txId, errors = Debug.toString err }

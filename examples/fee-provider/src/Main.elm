@@ -412,7 +412,7 @@ update msg model =
                     )
 
                 Err err ->
-                    ( TxSubmitted ctx action { txId = txId, errors = Debug.toString err }
+                    ( TxSubmitted ctx action { txId = txId, errors = TxIntent.errorToString err }
                     , Cmd.none
                     )
 
@@ -456,7 +456,7 @@ lock ({ localStateUtxos, myKeyCred, myStakeKeyHash, scriptAddress, loadedWallet,
             )
 
         Err err ->
-            ( BlueprintLoaded loadedWallet lockScript { errors = Debug.toString err }
+            ( BlueprintLoaded loadedWallet lockScript { errors = TxIntent.errorToString err }
             , Cmd.none
             )
 
@@ -590,7 +590,7 @@ displayErrors err =
         text ""
 
     else
-        div [] [ text <| "ERRORS: " ++ err ]
+        Html.pre [] [ text <| "ERRORS: " ++ err ]
 
 
 viewLoadedWallet : LoadedWallet -> List (Html msg)

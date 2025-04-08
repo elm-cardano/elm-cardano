@@ -442,7 +442,7 @@ update msg model =
                     )
 
                 Err err ->
-                    ( ProtocolParamsLoaded w lockScript feeProvider protocolParams { errors = Debug.toString err }
+                    ( ProtocolParamsLoaded w lockScript feeProvider protocolParams { errors = TxIntent.errorToString err }
                     , Cmd.none
                     )
 
@@ -491,7 +491,7 @@ update msg model =
                     )
 
                 Err err ->
-                    ( TxSubmitted ctx action { txId = txId, errors = Debug.toString err }
+                    ( TxSubmitted ctx action { txId = txId, errors = TxIntent.errorToString err }
                     , Cmd.none
                     )
 
@@ -535,7 +535,7 @@ update msg model =
                     )
 
                 Err err ->
-                    ( TxSubmitted ctx action { txId = txId, errors = Debug.toString err }
+                    ( TxSubmitted ctx action { txId = txId, errors = TxIntent.errorToString err }
                     , Cmd.none
                     )
 
@@ -682,7 +682,7 @@ displayErrors err =
         text ""
 
     else
-        div [] [ text <| "ERRORS: " ++ err ]
+        Html.pre [] [ text <| "ERRORS: " ++ err ]
 
 
 viewLoadedWallet : LoadedWallet -> List (Html msg)

@@ -487,7 +487,7 @@ update msg model =
                     )
 
                 Err err ->
-                    ( Initialized ctx { errors = [ Debug.toString err ] }, Cmd.none )
+                    ( Initialized ctx { errors = [ TxIntent.errorToString err ] }, Cmd.none )
 
         -- Recording the selected votes
         ( ProposalSelectionChanged actionId isSelected, TxSubmitted ctx action rest ) ->
@@ -570,7 +570,7 @@ update msg model =
                     )
 
                 Err err ->
-                    ( TxSubmitted ctx action { txId = txId, errors = Debug.toString err }
+                    ( TxSubmitted ctx action { txId = txId, errors = TxIntent.errorToString err }
                     , Cmd.none
                     )
 
@@ -613,7 +613,7 @@ update msg model =
                     )
 
                 Err err ->
-                    ( TxSubmitted ctx action { txId = txId, errors = Debug.toString err }
+                    ( TxSubmitted ctx action { txId = txId, errors = TxIntent.errorToString err }
                     , Cmd.none
                     )
 
@@ -820,7 +820,7 @@ displayErrors err =
         text ""
 
     else
-        div [] [ text <| "ERRORS: " ++ err ]
+        Html.pre [] [ text <| "ERRORS: " ++ err ]
 
 
 viewLoadedWallet : LoadedWallet -> Html msg

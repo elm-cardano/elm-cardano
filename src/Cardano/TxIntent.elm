@@ -1,5 +1,5 @@
 module Cardano.TxIntent exposing
-    ( balance, finalize, finalizeAdvanced, TxFinalized, TxFinalizationError(..)
+    ( balance, finalize, finalizeAdvanced, TxFinalized, TxFinalizationError(..), errorToString
     , TxIntent(..), SpendSource(..)
     , CertificateIntent(..)
     , VoteIntent, ProposalIntent, ActionProposal(..)
@@ -39,7 +39,7 @@ and finally trying to validate it and auto-populate all requirements.
 
 # Code Documentation
 
-@docs balance, finalize, finalizeAdvanced, TxFinalized, TxFinalizationError
+@docs balance, finalize, finalizeAdvanced, TxFinalized, TxFinalizationError, errorToString
 @docs TxIntent, SpendSource
 @docs CertificateIntent
 @docs VoteIntent, ProposalIntent, ActionProposal
@@ -236,6 +236,66 @@ type TxFinalizationError
     | UplcVmError String
     | GovProposalsNotSupportedInSimpleFinalize
     | FailurePleaseReportToElmCardano String
+
+
+{-| Provide a default function to convert an error to a human-readable string.
+-}
+errorToString : TxFinalizationError -> String
+errorToString txFinalizationError =
+    case txFinalizationError of
+        UnableToGuessFeeSource ->
+            "Unable to guess the fee source. This is usually the case when intents do not contain any spending or receiving at a public key address"
+
+        UnbalancedIntents _ msg ->
+            msg
+
+        InsufficientManualFee { declared, computed } ->
+            "Insufficient fee. The fee declared in the Tx is " ++ Natural.toString declared ++ " but when I compute it I get " ++ Natural.toString computed ++ ". Maybe the Tx finalization did not reach a stable point."
+
+        NotEnoughMinAda msg ->
+            "Not enough minAda. " ++ msg
+
+        InvalidAddress address msg ->
+            "Invalid address " ++ Address.toBech32 address ++ ". " ++ msg
+
+        InvalidStakeAddress stakeAddress msg ->
+            "Invalid stake address " ++ Debug.toString stakeAddress ++ ". " ++ msg
+
+        DuplicateVoters voters ->
+            "Duplicate voters. Some voters are duplicated in multiple vote intents. Please group them into a single vote intent: " ++ String.join ", " (List.map .voter voters)
+
+        EmptyVotes { voter } ->
+            "Empty vote. This voter has a vote intent with no vote: " ++ voter
+
+        DuplicateMints policyIds ->
+            "Duplicate policy IDs in mints. This is not allowed because we cannot know which redeemer to use. Please use a single MintBurn intent for these policy IDs: " ++ String.join ", " (List.map .policyId policyIds)
+
+        EmptyMint { policyId } ->
+            "Empty Mint are not allowed. The mint intent for this policy ID is empty (or of 0 value): " ++ policyId
+
+        WitnessError witnessError ->
+            Witness.errorToString witnessError
+
+        FailedToPerformCoinSelection coinSelectionError ->
+            "Error while performing coin selection: " ++ CoinSelection.errorToString coinSelectionError
+
+        CollateralSelectionError coinSelectionError ->
+            "Error while performing collateral selection: " ++ CoinSelection.errorToString coinSelectionError
+
+        DuplicatedMetadataTags id ->
+            "Duplicated metadata tag is not allowed: " ++ String.fromInt id
+
+        IncorrectTimeValidityRange msg ->
+            "Incorrect time validity range. " ++ msg
+
+        UplcVmError msg ->
+            "Phase-2 UPLC VM error. " ++ msg
+
+        GovProposalsNotSupportedInSimpleFinalize ->
+            "Governance proposal intents are not supported with the simple `finalize` function. Please use `finalizeAdvanced` instead."
+
+        FailurePleaseReportToElmCardano msg ->
+            "Something truely unexpected happened. Please report this error in the #elm channel of TxPipe discord server or in an issue on the GitHub repository. " ++ msg
 
 
 {-| Attempt to balance a transaction with a provided address.
