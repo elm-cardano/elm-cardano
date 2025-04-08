@@ -7,7 +7,7 @@ import Cardano.CoinSelection as CoinSelection exposing (Error(..))
 import Cardano.Data as Data
 import Cardano.Gov as Gov exposing (Drep(..), Vote(..), Voter(..), noParamUpdate)
 import Cardano.Metadatum as Metadatum
-import Cardano.MultiAsset as MultiAsset
+import Cardano.MultiAsset as MultiAsset exposing (PolicyId)
 import Cardano.Redeemer exposing (Redeemer)
 import Cardano.Script as Script exposing (NativeScript(..), PlutusVersion(..))
 import Cardano.Transaction as Transaction exposing (Certificate(..), Transaction, newBody, newWitnessSet)
@@ -300,7 +300,7 @@ okTxBuilding =
             { govState = TxIntent.emptyGovernanceState
             , localStateUtxos =
                 [ makeAdaOutput 0 testAddr.me 5
-                , makeAsset 1 testAddr.me cat.policyIdStr cat.assetNameStr 3
+                , makeAsset 1 testAddr.me cat.policyId cat.assetNameStr 3
                 , ( dog.scriptRef, dog.refOutput )
                 , ( cat.scriptRef, cat.refOutput )
                 ]
@@ -732,9 +732,6 @@ okTxBuilding =
                     [ { actionId = actionId 1, vote = VoteNo, rationale = Nothing }
                     , { actionId = actionId 0, vote = VoteNo, rationale = Nothing }
                     ]
-
-                -- action 1 will be overwritten by action 0, because same Voter
-                , Vote withMyDrepScript [ { actionId = actionId 1, vote = VoteAbstain, rationale = Nothing } ]
                 , Vote withMyDrepScript [ { actionId = actionId 0, vote = VoteAbstain, rationale = Nothing } ]
                 ]
             }
@@ -1019,7 +1016,7 @@ failTxBuilding =
             { govState = TxIntent.emptyGovernanceState
             , localStateUtxos =
                 [ makeAdaOutput 0 testAddr.me 5
-                , makeAsset 1 testAddr.me cat.policyIdStr cat.assetNameStr 3
+                , makeAsset 1 testAddr.me cat.policyId cat.assetNameStr 3
                 ]
             , evalScriptsCosts = \_ _ -> Ok []
             , fee = twoAdaFee
@@ -1825,8 +1822,11 @@ testAddr =
 
 
 dog =
-    { policyId = dummyCredentialHash "dog"
-    , policyIdStr = "dog"
+    let
+        dummyNativeScript =
+            Script.Native <| Script.ScriptAny [ Script.ScriptAll [], Script.ScriptPubkey <| dummyCredentialHash "dog" ]
+    in
+    { policyId = Script.hash dummyNativeScript
     , assetName = Bytes.fromText "yksoh"
     , assetNameStr = "yksoh"
     , scriptRef = makeRef "dogScriptRef" 0
@@ -1834,14 +1834,17 @@ dog =
         { address = makeAddress "dogScriptRefAddress"
         , amount = Value.onlyLovelace (ada 5)
         , datumOption = Nothing
-        , referenceScript = Just <| Script.refFromScript <| Script.Native <| Script.ScriptAll [] -- dummy
+        , referenceScript = Just <| Script.refFromScript dummyNativeScript
         }
     }
 
 
 cat =
-    { policyId = dummyCredentialHash "cat"
-    , policyIdStr = "cat"
+    let
+        dummyNativeScript =
+            Script.Native <| Script.ScriptAny [ Script.ScriptAll [], Script.ScriptPubkey <| dummyCredentialHash "cat" ]
+    in
+    { policyId = Script.hash dummyNativeScript
     , assetName = Bytes.fromText "felix"
     , assetNameStr = "felix"
     , scriptRef = makeRef "catScriptRef" 0
@@ -1849,7 +1852,7 @@ cat =
         { address = makeAddress "catScriptRefAddress"
         , amount = Value.onlyLovelace (ada 6)
         , datumOption = Nothing
-        , referenceScript = Just <| Script.refFromScript <| Script.Native <| Script.ScriptAll [] -- dummy
+        , referenceScript = Just <| Script.refFromScript dummyNativeScript
         }
     }
 
@@ -1896,7 +1899,7 @@ makeRef id index =
     }
 
 
-makeAsset : Int -> Address -> String -> String -> Int -> ( OutputReference, Output )
+makeAsset : Int -> Address -> Bytes PolicyId -> String -> Int -> ( OutputReference, Output )
 makeAsset index address policyId name amount =
     ( makeRef (String.fromInt index) index
     , { address = address
@@ -1914,9 +1917,9 @@ makeAdaOutput index address amount =
     )
 
 
-makeToken : String -> String -> Int -> Value
+makeToken : Bytes PolicyId -> String -> Int -> Value
 makeToken policyId name amount =
-    Value.onlyToken (dummyCredentialHash policyId) (Bytes.fromText name) (Natural.fromSafeInt amount)
+    Value.onlyToken policyId (Bytes.fromText name) (Natural.fromSafeInt amount)
 
 
 ada : Int -> Natural
