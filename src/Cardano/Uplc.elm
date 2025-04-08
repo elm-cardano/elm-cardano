@@ -106,6 +106,27 @@ evalScriptsCostsRaw vmConfig usedUtxos txBytes =
                 |> CD.decode Redeemer.fromCborArray
     in
     evalScriptsCostsKernel jsArguments
+        |> Result.mapError
+            (\error ->
+                -- Report the error message in the console, with the Tx bytes, and the input bytes
+                let
+                    utxoRefs =
+                        List.map Utxo.refAsString refs
+
+                    utxoOutputs =
+                        List.map (Bytes.fromBytes << CE.encode << Utxo.encodeOutput) outputs
+                in
+                String.join "\n\n"
+                    [ error
+                    , "Here are more details to help with debugging (cbor.nemo157.com) and error reporting."
+                    , "The Tx that failed phase-2 evaluation is the following, CBOR-encoded:"
+                    , Bytes.toHex txBytes
+                    , "The UTxOs in context for the evaluation are the following:"
+                    , "  " ++ String.join "\n  " utxoRefs
+                    , "And they contain the following outputs, in the same order, CBOR-encoded:"
+                    , "  " ++ String.join "\n  " (List.map Bytes.toHex utxoOutputs)
+                    ]
+            )
         |> Result.map (List.filterMap decodeRedeemer)
 
 

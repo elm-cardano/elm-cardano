@@ -4,6 +4,7 @@ import Browser
 import Bytes.Comparable as Bytes
 import Cardano.Transaction as Transaction
 import Cardano.TxExamples exposing (example1, example2, example3, example4, example5, example6, prettyTx)
+import Cardano.TxIntent as TxIntent
 import Cardano.Uplc as Uplc
 import Cardano.Utxo as Utxo
 import Html exposing (Html, div, text)
@@ -22,7 +23,7 @@ main =
 example ex =
     case ex () of
         Err error ->
-            Debug.toString error
+            TxIntent.errorToString error
 
         Ok { tx } ->
             prettyTx tx

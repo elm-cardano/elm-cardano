@@ -307,7 +307,7 @@ update msg model =
                             )
 
                         Err txBuildingError ->
-                            ( { model | lastError = Debug.toString txBuildingError }, Cmd.none )
+                            ( { model | lastError = TxIntent.errorToString txBuildingError }, Cmd.none )
 
         SubmitTxButtonClicked wallet ->
             case model.signedTx of

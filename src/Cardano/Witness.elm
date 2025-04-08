@@ -1,12 +1,12 @@
 module Cardano.Witness exposing
-    ( Voter(..), toVoter, Credential(..), toCredential, Script(..), NativeScript, PlutusScript, Source(..), Error(..)
+    ( Voter(..), toVoter, Credential(..), toCredential, Script(..), NativeScript, PlutusScript, Source(..), Error(..), errorToString
     , credentialIsPlutusScript, mapSource, toHex, sourceToResult, extractRef
     , checkDatum, checkScript, checkNativeScript, checkPlutusScript
     )
 
 {-| Handling witnesses for Tx building intents.
 
-@docs Voter, toVoter, Credential, toCredential, Script, NativeScript, PlutusScript, Source, Error
+@docs Voter, toVoter, Credential, toCredential, Script, NativeScript, PlutusScript, Source, Error, errorToString
 
 @docs credentialIsPlutusScript, mapSource, toHex, sourceToResult, extractRef
 
@@ -198,6 +198,36 @@ type Error
     | ReferenceOutputsMissingFromLocalState (List OutputReference)
     | MissingReferenceScript OutputReference
     | InvalidScriptRef OutputReference (Bytes Script.Script) String
+
+
+{-| Convert an error into a human-readable string.
+-}
+errorToString : Error -> String
+errorToString error =
+    case error of
+        InvalidExpectedSigners { scriptHash } message ->
+            "Invalid expected signers for script hash " ++ Bytes.toHex scriptHash ++ ": " ++ message
+
+        ScriptHashMismatch { expected, witness } message ->
+            "Script hash mismatch: expected " ++ Bytes.toHex expected ++ ", got " ++ Bytes.toHex witness ++ ": " ++ message
+
+        ExtraneousDatum datum message ->
+            "Extraneous datum: " ++ message ++ ": " ++ Debug.toString datum
+
+        MissingDatum hash message ->
+            "Missing datum with hash " ++ Bytes.toHex hash ++ ": " ++ message
+
+        DatumHashMismatch { expected, witness } message ->
+            "Datum hash mismatch: expected " ++ Bytes.toHex expected ++ ", got " ++ Bytes.toHex witness ++ ": " ++ message
+
+        ReferenceOutputsMissingFromLocalState references ->
+            "Reference outputs missing from local state: " ++ String.join ", " (List.map Utxo.refAsString references)
+
+        MissingReferenceScript reference ->
+            "Missing reference script for output reference " ++ Utxo.refAsString reference
+
+        InvalidScriptRef reference script message ->
+            "Invalid script reference for output reference " ++ Utxo.refAsString reference ++ ": " ++ message ++ " : " ++ Bytes.toHex script
 
 
 {-| Check the witness of a script.

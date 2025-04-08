@@ -1,5 +1,5 @@
 module Cardano.CoinSelection exposing
-    ( Context, Error(..), Selection, Algorithm
+    ( Context, Error(..), errorToString, Selection, Algorithm
     , largestFirst, inOrderedList
     , perAddress, PerAddressConfig, PerAddressContext
     , CollateralContext, collateral
@@ -13,7 +13,7 @@ selection algorithm as described in CIP2 (<https://cips.cardano.org/cips/cip2/>)
 
 # Types
 
-@docs Context, Error, Selection, Algorithm
+@docs Context, Error, errorToString, Selection, Algorithm
 
 
 # Strategies
@@ -47,6 +47,27 @@ import Result.Extra
 type Error
     = MaximumInputCountExceeded
     | UTxOBalanceInsufficient { selectedUtxos : List ( OutputReference, Output ), missingValue : Value }
+
+
+{-| Converts an error to a human-readable string.
+-}
+errorToString : Error -> String
+errorToString error =
+    case error of
+        MaximumInputCountExceeded ->
+            "Maximum input count exceeded"
+
+        UTxOBalanceInsufficient { selectedUtxos, missingValue } ->
+            let
+                displayOneUtxo ( ref, output ) =
+                    Utxo.refAsString ref ++ " : " ++ (String.join "\n  " <| Value.toMultilineString output.amount)
+            in
+            String.join "\n\n"
+                [ "UTxO balance insufficient. I am still missing the following value, from the following UTxOs."
+                , "Still missing value: " ++ String.join "\n  " (Value.toMultilineString missingValue)
+                , "Selected UTxOs (with the value they contains):"
+                , String.join "\n" (List.map displayOneUtxo selectedUtxos)
+                ]
 
 
 {-| Represents the result of a successful coin selection.

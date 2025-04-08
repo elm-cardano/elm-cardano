@@ -356,7 +356,7 @@ update msg model =
                     )
 
                 Err err ->
-                    ( TxSubmitted ctx { txId = txId, errors = Debug.toString err }
+                    ( TxSubmitted ctx { txId = txId, errors = TxIntent.errorToString err }
                     , Cmd.none
                     )
 
@@ -398,7 +398,7 @@ createBucket ({ localStateUtxos, myKeyCred, scriptAddress, loadedWallet, lockScr
             )
 
         Err err ->
-            ( BlueprintLoaded loadedWallet lockScript { errors = Debug.toString err }
+            ( BlueprintLoaded loadedWallet lockScript { errors = TxIntent.errorToString err }
             , Cmd.none
             )
 
@@ -468,7 +468,7 @@ displayErrors err =
         text ""
 
     else
-        div [] [ text <| "ERRORS: " ++ err ]
+        Html.pre [] [ text <| "ERRORS: " ++ err ]
 
 
 viewLoadedWallet : LoadedWallet -> List (Html msg)
