@@ -46,7 +46,7 @@ if (!target) {
   process.exit(1);
 }
 
-const repoUrl = process.env.GITHUB_REPOSITORY || 'your-username/your-repo';
+const repoUrl = "${process.env.GITHUB_REPOSITORY}" || 'your-username/your-repo';
 const binaryName = target.asset_name;
 const url = "https://github.com/"+ repoUrl +"/releases/download/v${version}/" + binaryName;
 const binaryPath = path.join(__dirname, 'binary' + (currentPlatform === 'win32' ? '.exe' : ''));
