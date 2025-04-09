@@ -1,0 +1,7 @@
+{
+  "name": "elm-cardano",
+  "description": "Elm compiler wrapped with some post-processing for elm-cardano dapps",
+  "keywords": ["elm", "cardano"],
+  "author": "",
+  "license": "MIT"
+}

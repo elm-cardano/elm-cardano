@@ -119,7 +119,7 @@ credentialToHaskellOrderComparable cred =
             ( 0, Bytes.toHex hash )
 
         VKeyHash hash ->
-            ( 0, Bytes.toHex hash )
+            ( 1, Bytes.toHex hash )
 
 
 {-| A StakeCredential represents the delegation and rewards withdrawal conditions associated with some stake address / account.

@@ -3,6 +3,7 @@ module Cardano.MultiAsset exposing
     , isEmpty, get, empty, onlyToken, normalize, mintAdd
     , balance, map2, split
     , coinsToCbor, mintToCbor, coinsFromCbor, mintFromCbor
+    , toMultilineString
     )
 
 {-| Handling multi-asset values.
@@ -11,10 +12,11 @@ module Cardano.MultiAsset exposing
 @docs isEmpty, get, empty, onlyToken, normalize, mintAdd
 @docs balance, map2, split
 @docs coinsToCbor, mintToCbor, coinsFromCbor, mintFromCbor
+@docs toMultilineString
 
 -}
 
-import Bytes.Comparable exposing (Bytes)
+import Bytes.Comparable as Bytes exposing (Bytes)
 import Bytes.Map exposing (BytesMap)
 import Cardano.Address exposing (CredentialHash)
 import Cbor.Decode as D
@@ -210,3 +212,22 @@ coinsFromCbor =
 mintFromCbor : D.Decoder (MultiAsset Integer)
 mintFromCbor =
     Bytes.Map.fromCbor (Bytes.Map.fromCbor DE.integer)
+
+
+{-| Helper function to display `MultiAsset`.
+-}
+toMultilineString : (a -> String) -> MultiAsset a -> List String
+toMultilineString toStr multiAsset =
+    Bytes.Map.toList multiAsset
+        |> List.concatMap
+            (\( policyId, assets ) ->
+                Bytes.Map.toList assets
+                    |> List.map
+                        (\( name, amount ) ->
+                            String.join " "
+                                [ Bytes.pretty policyId
+                                , Bytes.pretty name
+                                , toStr amount
+                                ]
+                        )
+            )

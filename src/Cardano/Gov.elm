@@ -13,7 +13,7 @@ module Cardano.Gov exposing
     , Nonce(..)
     , VotingProcedure, votingProcedureFromCbor, encodeVotingProcedure
     , Vote(..), encodeVote
-    , Voter(..), VoterDict, emptyVoterDict, voterDictFromList, voterCredentialHash, voterKeyCred, voterLedgerOrder, voterFromCbor, encodeVoter
+    , Voter(..), VoterDict, emptyVoterDict, voterDictFromList, voterToId, voterCredentialHash, voterKeyCred, voterLedgerOrder, voterFromCbor, encodeVoter
     , Anchor, AnchorDataHash, decodeAnchor, encodeAnchor
     )
 
@@ -47,7 +47,7 @@ module Cardano.Gov exposing
 
 @docs Vote, encodeVote
 
-@docs Voter, VoterDict, emptyVoterDict, voterDictFromList, voterCredentialHash, voterKeyCred, voterLedgerOrder, voterFromCbor, encodeVoter
+@docs Voter, VoterDict, emptyVoterDict, voterDictFromList, voterToId, voterCredentialHash, voterKeyCred, voterLedgerOrder, voterFromCbor, encodeVoter
 
 @docs Anchor, AnchorDataHash, decodeAnchor, encodeAnchor
 
@@ -193,6 +193,21 @@ type Voter
     = VoterCommitteeHotCred Credential -- 0, addr_keyhash // 1, scripthash
     | VoterDrepCred Credential -- 2, addr_keyhash // 3, scripthash
     | VoterPoolId (Bytes CredentialHash) -- 4, addr_keyhash
+
+
+{-| Convert a Voter into a CIP-129 governance Id.
+-}
+voterToId : Voter -> Id
+voterToId voter =
+    case voter of
+        VoterCommitteeHotCred cred ->
+            CcHotCredId cred
+
+        VoterDrepCred cred ->
+            DrepId cred
+
+        VoterPoolId poolId ->
+            PoolId poolId
 
 
 {-| Convenient alias for a `Dict` with [Voter] keys.

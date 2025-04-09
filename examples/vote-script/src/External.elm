@@ -2,7 +2,6 @@ port module External exposing (main)
 
 import Browser
 import Bytes.Comparable as Bytes
-import Cardano exposing (SpendSource(..), TxIntent(..), WitnessSource(..))
 import Cardano.Address as Address exposing (Address, Credential(..), NetworkId(..))
 import Cardano.Cip30 as Cip30
 import Cardano.Script exposing (PlutusVersion(..))

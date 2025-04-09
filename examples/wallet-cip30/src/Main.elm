@@ -3,10 +3,10 @@ port module Main exposing (..)
 import Browser
 import Bytes.Comparable as Bytes
 import Bytes.Encode
-import Cardano exposing (SpendSource(..), TxIntent(..))
 import Cardano.Address as Address exposing (Address)
 import Cardano.Cip30 as Cip30
 import Cardano.Transaction exposing (Transaction)
+import Cardano.TxIntent as TxIntent exposing (SpendSource(..), TxIntent(..))
 import Cardano.Utxo as Utxo
 import Cardano.Value as CValue
 import Dict exposing (Dict)
@@ -300,14 +300,14 @@ update msg model =
                         txIntents =
                             [ SendTo address CValue.zero ]
                     in
-                    case Cardano.finalize localStateUtxos [] txIntents of
+                    case TxIntent.finalize localStateUtxos [] txIntents of
                         Ok { tx } ->
                             ( { model | signedTx = WaitingSign tx }
                             , toWallet (Cip30.encodeRequest (Cip30.signTx wallet { partialSign = False } tx))
                             )
 
                         Err txBuildingError ->
-                            ( { model | lastError = Debug.toString txBuildingError }, Cmd.none )
+                            ( { model | lastError = TxIntent.errorToString txBuildingError }, Cmd.none )
 
         SubmitTxButtonClicked wallet ->
             case model.signedTx of

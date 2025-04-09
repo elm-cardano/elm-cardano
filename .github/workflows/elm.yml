@@ -11,7 +11,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - uses: mpizenberg/elm-tooling-action@v1.5
+      - uses: mpizenberg/elm-tooling-action@v1.7
         with:
           cache-key: elm-home-make${{ hashFiles('elm-tooling.json', 'elm.json') }}
           cache-restore-key: elm-home-make
@@ -23,7 +23,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - name: Download the uplc-wasm archive
-        run: curl -LO 'https://github.com/mpizenberg/uplc-wasm/releases/download/v0.3.0/my-artifact.zip'
+        run: curl -LO 'https://github.com/mpizenberg/uplc-wasm/releases/download/v0.3.1/my-artifact.zip'
       - run: unzip my-artifact.zip -d cli/pkg-uplc-wasm
 
       - uses: dtolnay/rust-toolchain@stable
@@ -49,7 +49,7 @@ jobs:
         run: |
           chmod +x target/release/elm-cardano
           echo "${GITHUB_WORKSPACE}/target/release" >> $GITHUB_PATH
-      - uses: mpizenberg/elm-tooling-action@v1.5
+      - uses: mpizenberg/elm-tooling-action@v1.7
         with:
           cache-key: elm-home-tests${{ hashFiles('elm-tooling.json', 'elm.json') }}
           cache-restore-key: elm-home-tests
@@ -67,7 +67,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - uses: mpizenberg/elm-tooling-action@v1.5
+      - uses: mpizenberg/elm-tooling-action@v1.7
         with:
           cache-key: elm-home-examples${{ hashFiles('elm-tooling.json', 'elm.json') }}
           cache-restore-key: elm-home-examples
@@ -86,7 +86,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - uses: mpizenberg/elm-tooling-action@v1.5
+      - uses: mpizenberg/elm-tooling-action@v1.7
         with:
           cache-key: elm-home-format${{ hashFiles('elm-tooling.json', 'elm.json') }}
           cache-restore-key: elm-home-format
@@ -105,7 +105,7 @@ jobs:
           # elm-tooling install is handled by elm-tooling-action
           NO_ELM_TOOLING_INSTALL: 1
         run: npm ci
-      - uses: mpizenberg/elm-tooling-action@v1.5
+      - uses: mpizenberg/elm-tooling-action@v1.7
         with:
           cache-key: elm-home-review${{ hashFiles('elm-tooling.json', 'elm.json', 'review/elm.json') }}
           cache-restore-key: elm-home-review

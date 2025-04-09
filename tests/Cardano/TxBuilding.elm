@@ -2,19 +2,20 @@ module Cardano.TxBuilding exposing (suite)
 
 import Bytes.Comparable as Bytes exposing (Bytes)
 import Bytes.Map as Map
-import Cardano exposing (ActionProposal(..), CertificateIntent(..), CredentialWitness(..), Fee(..), GovernanceState, ScriptWitness(..), SpendSource(..), TxFinalizationError(..), TxFinalized, TxIntent(..), TxOtherInfo(..), VoterWitness(..), WitnessSource(..), finalizeAdvanced)
 import Cardano.Address as Address exposing (Address, Credential(..), CredentialHash, NetworkId(..), StakeCredential(..))
 import Cardano.CoinSelection as CoinSelection exposing (Error(..))
 import Cardano.Data as Data
 import Cardano.Gov as Gov exposing (Drep(..), Vote(..), Voter(..), noParamUpdate)
 import Cardano.Metadatum as Metadatum
-import Cardano.MultiAsset as MultiAsset
+import Cardano.MultiAsset as MultiAsset exposing (PolicyId)
 import Cardano.Redeemer exposing (Redeemer)
 import Cardano.Script as Script exposing (NativeScript(..), PlutusVersion(..))
 import Cardano.Transaction as Transaction exposing (Certificate(..), Transaction, newBody, newWitnessSet)
+import Cardano.TxIntent as TxIntent exposing (ActionProposal(..), CertificateIntent(..), Fee(..), GovernanceState, SpendSource(..), TxFinalizationError(..), TxFinalized, TxIntent(..), TxOtherInfo(..), finalizeAdvanced)
 import Cardano.Uplc as Uplc
 import Cardano.Utxo as Utxo exposing (DatumOption(..), Output, OutputReference)
 import Cardano.Value as Value exposing (Value)
+import Cardano.Witness as Witness exposing (Credential(..), Error(..), Voter(..))
 import Expect exposing (Expectation)
 import Integer
 import Natural exposing (Natural)
@@ -26,6 +27,36 @@ suite =
     describe "Cardano Tx building"
         [ okTxBuilding
         , failTxBuilding
+        , balanceIntents
+        ]
+
+
+balanceIntents : Test
+balanceIntents =
+    let
+        balanceWithMe =
+            TxIntent.balance Utxo.emptyRefDict testAddr.me
+
+        spendAda amount =
+            Spend <|
+                FromWallet
+                    { address = testAddr.me
+                    , value = Value.onlyLovelace <| ada amount
+                    , guaranteedUtxos = []
+                    }
+
+        receiveAda amount =
+            SendTo testAddr.me <| Value.onlyLovelace <| ada amount
+    in
+    describe "Balance intents"
+        [ test "with to many inputs" <|
+            \_ ->
+                balanceWithMe [ spendAda 1 ]
+                    |> Expect.equal (Ok [ receiveAda 1, spendAda 0, spendAda 1 ])
+        , test "with to many outputs" <|
+            \_ ->
+                balanceWithMe [ receiveAda 1 ]
+                    |> Expect.equal (Ok [ receiveAda 0, spendAda 1, receiveAda 1 ])
         ]
 
 
@@ -33,7 +64,7 @@ okTxBuilding : Test
 okTxBuilding =
     describe "Successfull"
         [ okTxTest "with just manual fees"
-            { govState = Cardano.emptyGovernanceState
+            { govState = TxIntent.emptyGovernanceState
             , localStateUtxos = [ makeAdaOutput 0 testAddr.me 2 ]
             , evalScriptsCosts = \_ _ -> Ok []
             , fee = twoAdaFee
@@ -53,7 +84,7 @@ okTxBuilding =
                 }
             )
         , okTxTest "with just auto fees"
-            { govState = Cardano.emptyGovernanceState
+            { govState = TxIntent.emptyGovernanceState
             , localStateUtxos = [ makeAdaOutput 0 testAddr.me 2 ]
             , evalScriptsCosts = \_ _ -> Ok []
             , fee = autoFee
@@ -93,7 +124,7 @@ okTxBuilding =
                 }
             )
         , okTxTest "with spending from, and sending to the same address"
-            { govState = Cardano.emptyGovernanceState
+            { govState = TxIntent.emptyGovernanceState
             , localStateUtxos = [ makeAdaOutput 0 testAddr.me 5 ]
             , evalScriptsCosts = \_ _ -> Ok []
             , fee = twoAdaFee
@@ -127,9 +158,9 @@ okTxBuilding =
                         , SendTo testAddr.me (Value.onlyLovelace <| ada 1)
                         ]
                 in
-                Expect.ok (Cardano.finalize localStateUtxos [] txIntents)
+                Expect.ok (TxIntent.finalize localStateUtxos [] txIntents)
         , okTxTest "send 1 ada from me to you"
-            { govState = Cardano.emptyGovernanceState
+            { govState = TxIntent.emptyGovernanceState
             , localStateUtxos = [ makeAdaOutput 0 testAddr.me 5 ]
             , evalScriptsCosts = \_ _ -> Ok []
             , fee = twoAdaFee
@@ -156,7 +187,7 @@ okTxBuilding =
                 }
             )
         , okTxTest "I pay the fees for your ada transfer to me"
-            { govState = Cardano.emptyGovernanceState
+            { govState = TxIntent.emptyGovernanceState
             , localStateUtxos =
                 [ makeAdaOutput 0 testAddr.me 5
                 , makeAdaOutput 1 testAddr.you 7
@@ -196,7 +227,7 @@ okTxBuilding =
                 { threeCat | lovelace = ada 2 }
           in
           okTxTest "send 3 cat with 2 ada from me to you"
-            { govState = Cardano.emptyGovernanceState
+            { govState = TxIntent.emptyGovernanceState
             , localStateUtxos =
                 [ ( makeRef "0" 0, Utxo.fromLovelace testAddr.me (ada 5) )
                 , ( makeRef "1" 1, Utxo.simpleOutput testAddr.me threeCat )
@@ -236,7 +267,7 @@ okTxBuilding =
                 { threeCat | lovelace = minAda }
           in
           okTxTest "send 3 cat with minAda from me to you"
-            { govState = Cardano.emptyGovernanceState
+            { govState = TxIntent.emptyGovernanceState
             , localStateUtxos =
                 [ ( makeRef "0" 0, Utxo.fromLovelace testAddr.me (ada 5) )
                 , ( makeRef "1" 1, Utxo.simpleOutput testAddr.me threeCat )
@@ -266,10 +297,10 @@ okTxBuilding =
                 }
             )
         , okTxTest "mint 1 dog and burn 1 cat"
-            { govState = Cardano.emptyGovernanceState
+            { govState = TxIntent.emptyGovernanceState
             , localStateUtxos =
                 [ makeAdaOutput 0 testAddr.me 5
-                , makeAsset 1 testAddr.me cat.policyIdStr cat.assetNameStr 3
+                , makeAsset 1 testAddr.me cat.policyId cat.assetNameStr 3
                 , ( dog.scriptRef, dog.refOutput )
                 , ( cat.scriptRef, cat.refOutput )
                 ]
@@ -281,7 +312,7 @@ okTxBuilding =
                 [ MintBurn
                     { policyId = dog.policyId
                     , assets = Map.singleton dog.assetName Integer.one
-                    , scriptWitness = NativeWitness { script = WitnessByReference dog.scriptRef, expectedSigners = [] }
+                    , scriptWitness = Witness.Native { script = Witness.ByReference dog.scriptRef, expectedSigners = [] }
                     }
                 , SendTo testAddr.me (Value.onlyToken dog.policyId dog.assetName Natural.one)
 
@@ -295,7 +326,7 @@ okTxBuilding =
                 , MintBurn
                     { policyId = cat.policyId
                     , assets = Map.singleton cat.assetName Integer.negativeOne
-                    , scriptWitness = NativeWitness { script = WitnessByReference cat.scriptRef, expectedSigners = [] }
+                    , scriptWitness = Witness.Native { script = Witness.ByReference cat.scriptRef, expectedSigners = [] }
                     }
                 ]
             }
@@ -339,7 +370,7 @@ okTxBuilding =
                     [] ->
                         0
 
-                    ( id, ref ) :: next ->
+                    ( id, ( ref, _ ) ) :: next ->
                         if ref == utxoBeingSpent then
                             id
 
@@ -389,7 +420,7 @@ okTxBuilding =
                 ]
           in
           okTxTest "spend 2 ada from a plutus script holding 4 ada"
-            { govState = Cardano.emptyGovernanceState
+            { govState = TxIntent.emptyGovernanceState
             , localStateUtxos = localStateUtxos
             , evalScriptsCosts = Uplc.evalScriptsCosts Uplc.defaultVmConfig
             , fee = twoAdaFee
@@ -401,7 +432,7 @@ okTxBuilding =
                         { spentInput = utxoBeingSpent
                         , datumWitness = Nothing
                         , plutusScriptWitness =
-                            { script = ( PlutusV3, WitnessByValue lock.scriptBytes )
+                            { script = ( PlutusV3, Witness.ByValue lock.scriptBytes )
                             , redeemerData = redeemer
                             , requiredSigners = [ myKeyCred ]
                             }
@@ -452,7 +483,7 @@ okTxBuilding =
                     |> Maybe.withDefault (dummyCredentialHash "ERROR")
           in
           okTxTest "Test with stake registration, pool delegation and drep delegation"
-            { govState = Cardano.emptyGovernanceState
+            { govState = TxIntent.emptyGovernanceState
             , localStateUtxos =
                 [ ( makeRef "0" 0, Utxo.fromLovelace testAddr.me (ada 5) )
                 ]
@@ -532,7 +563,7 @@ okTxBuilding =
                     Just
                         { policyId = Bytes.fromHexUnchecked "fa24fb305126805cf2164c161d852a0e7330cf988f1fe558cf7d4a64"
                         , plutusVersion = PlutusV3
-                        , scriptWitness = WitnessByValue guardrailsScriptBytes
+                        , scriptWitness = Witness.ByValue guardrailsScriptBytes
                         }
                 , lastEnactedCommitteeAction = Nothing
                 , lastEnactedConstitutionAction = Nothing
@@ -682,10 +713,10 @@ okTxBuilding =
                 WithPoolCred (dummyCredentialHash "poolId")
 
             withMyDrepScript =
-                WithDrepCred (WithScript drepScriptHash <| NativeWitness { script = WitnessByValue drepScript, expectedSigners = [] })
+                WithDrepCred (WithScript drepScriptHash <| Witness.Native { script = Witness.ByValue drepScript, expectedSigners = [] })
           in
           okTxTest "Test with multiple votes"
-            { govState = Cardano.emptyGovernanceState
+            { govState = TxIntent.emptyGovernanceState
             , localStateUtxos =
                 [ ( makeRef "0" 0, Utxo.fromLovelace testAddr.me (ada 5) )
                 ]
@@ -701,9 +732,6 @@ okTxBuilding =
                     [ { actionId = actionId 1, vote = VoteNo, rationale = Nothing }
                     , { actionId = actionId 0, vote = VoteNo, rationale = Nothing }
                     ]
-
-                -- action 1 will be overwritten by action 0, because same Voter
-                , Vote withMyDrepScript [ { actionId = actionId 1, vote = VoteAbstain, rationale = Nothing } ]
                 , Vote withMyDrepScript [ { actionId = actionId 0, vote = VoteAbstain, rationale = Nothing } ]
                 ]
             }
@@ -737,6 +765,99 @@ okTxBuilding =
                     , dummyCredentialHash "poolId"
                     , dummyCredentialHash "stk-me"
                     ]
+                }
+            )
+
+        -- Test with a script checking that each redeemer is an Int that corresponds
+        -- to the actual index of the redeemer in the script context.
+        -- This order is important to know, to make sure we build the TxContext correctly.
+        -- CF tweet: https://x.com/phil_uplc/status/1907456382061723818
+        -- CF Haskell code: https://github.com/IntersectMBO/cardano-ledger/blob/d79d41e09da6ab93067acddf624d1a540a3e4e8d/eras/conway/impl/src/Cardano/Ledger/Conway/Scripts.hs#L188
+        , let
+            spendIntents redeemer =
+                [ Spend <|
+                    FromPlutusScript
+                        { spentInput = makeRef "1" 1
+                        , datumWitness = Nothing
+                        , plutusScriptWitness = indexedScript.witness redeemer
+                        }
+                , SendTo testAddr.me (Value.onlyLovelace <| ada 2)
+                ]
+
+            mintIntents redeemer =
+                [ MintBurn
+                    { policyId = indexedScript.hash
+                    , assets = Map.singleton Bytes.empty Integer.one
+                    , scriptWitness = Witness.Plutus <| indexedScript.witness redeemer
+                    }
+                , SendTo testAddr.me <|
+                    Value.onlyToken indexedScript.hash Bytes.empty Natural.one
+                ]
+
+            withdrawIntents redeemer =
+                [ WithdrawRewards
+                    { stakeCredential =
+                        { networkId = Testnet
+                        , stakeCredential = ScriptHash indexedScript.hash
+                        }
+                    , amount = Natural.zero
+                    , scriptWitness = Just <| Witness.Plutus <| indexedScript.witness redeemer
+                    }
+                ]
+
+            certificateIntents redeemer =
+                [ IssueCertificate <|
+                    RegisterStake
+                        { delegator =
+                            WithScript indexedScript.hash <|
+                                Witness.Plutus (indexedScript.witness redeemer)
+                        , deposit = Natural.zero
+                        }
+                ]
+
+            voteIntents redeemer =
+                let
+                    voter =
+                        WithDrepCred <|
+                            WithScript indexedScript.hash <|
+                                Witness.Plutus (indexedScript.witness redeemer)
+
+                    dummyVote =
+                        { actionId =
+                            { transactionId = Bytes.dummy 32 "txid"
+                            , govActionIndex = 0
+                            }
+                        , vote = VoteNo
+                        , rationale = Nothing
+                        }
+                in
+                [ Vote voter [ dummyVote ] ]
+          in
+          okTxTest "where the redeemers are correctly sorted"
+            { govState = TxIntent.emptyGovernanceState
+            , localStateUtxos =
+                [ makeAdaOutput 0 testAddr.me 5
+                , makeAdaOutput 1 indexedScript.address 2
+                ]
+            , evalScriptsCosts = Uplc.evalScriptsCosts Uplc.defaultVmConfig
+            , fee = twoAdaFee
+            , txOtherInfo = []
+            , txIntents =
+                List.concat
+                    -- The indices here should correspond to their index
+                    -- in the list of redeemers in the script context.
+                    [ spendIntents 0
+                    , mintIntents 1
+                    , certificateIntents 2
+                    , withdrawIntents 3
+                    , voteIntents 4
+
+                    -- Propose would be 5 (but not easy to check for real)
+                    ]
+            }
+            (\{ tx } ->
+                { tx = tx
+                , expectedSignatures = [ dummyCredentialHash "key-me" ]
                 }
             )
         ]
@@ -783,9 +904,9 @@ failTxBuilding =
                     localStateUtxos =
                         Utxo.refDictFromList [ makeAdaOutput 0 testAddr.me 5 ]
                 in
-                Expect.equal (Err UnableToGuessFeeSource) (Cardano.finalize localStateUtxos [] [])
+                Expect.equal (Err UnableToGuessFeeSource) (TxIntent.finalize localStateUtxos [] [])
         , failTxTest "when there is no utxo in local state"
-            { govState = Cardano.emptyGovernanceState
+            { govState = TxIntent.emptyGovernanceState
             , localStateUtxos = []
             , evalScriptsCosts = \_ _ -> Ok []
             , fee = twoAdaFee
@@ -801,7 +922,7 @@ failTxBuilding =
                         Expect.fail ("I didn’t expect this failure: " ++ Debug.toString error)
             )
         , failTxTest "when there is insufficient manual fee (0.1 ada here)"
-            { govState = Cardano.emptyGovernanceState
+            { govState = TxIntent.emptyGovernanceState
             , localStateUtxos = [ makeAdaOutput 0 testAddr.me 5 ]
             , evalScriptsCosts = \_ _ -> Ok []
             , fee = ManualFee [ { paymentSource = testAddr.me, exactFeeAmount = Natural.fromSafeInt 100000 } ]
@@ -817,7 +938,7 @@ failTxBuilding =
                         Expect.fail ("I didn’t expect this failure: " ++ Debug.toString error)
             )
         , failTxTest "when inputs are missing from local state"
-            { govState = Cardano.emptyGovernanceState
+            { govState = TxIntent.emptyGovernanceState
             , localStateUtxos = []
             , evalScriptsCosts = \_ _ -> Ok []
             , fee = twoAdaFee
@@ -834,14 +955,14 @@ failTxBuilding =
             }
             (\error ->
                 case error of
-                    ReferenceOutputsMissingFromLocalState [ ref ] ->
+                    WitnessError (Witness.ReferenceOutputsMissingFromLocalState [ ref ]) ->
                         Expect.equal ref (makeRef "0" 0)
 
                     _ ->
                         Expect.fail ("I didn’t expect this failure: " ++ Debug.toString error)
             )
         , failTxTest "when Tx intents are unbalanced (too much spend here)"
-            { govState = Cardano.emptyGovernanceState
+            { govState = TxIntent.emptyGovernanceState
             , localStateUtxos = [ makeAdaOutput 0 testAddr.me 5 ]
             , evalScriptsCosts = \_ _ -> Ok []
             , fee = twoAdaFee
@@ -850,14 +971,14 @@ failTxBuilding =
             }
             (\error ->
                 case error of
-                    UnbalancedIntents _ ->
+                    UnbalancedIntents _ _ ->
                         Expect.pass
 
                     _ ->
                         Expect.fail ("I didn’t expect this failure: " ++ Debug.toString error)
             )
         , failTxTest "when Tx intents are unbalanced (too much send here)"
-            { govState = Cardano.emptyGovernanceState
+            { govState = TxIntent.emptyGovernanceState
             , localStateUtxos = [ makeAdaOutput 0 testAddr.me 5 ]
             , evalScriptsCosts = \_ _ -> Ok []
             , fee = twoAdaFee
@@ -866,14 +987,14 @@ failTxBuilding =
             }
             (\error ->
                 case error of
-                    UnbalancedIntents _ ->
+                    UnbalancedIntents _ _ ->
                         Expect.pass
 
                     _ ->
                         Expect.fail ("I didn’t expect this failure: " ++ Debug.toString error)
             )
         , failTxTest "when there is not enough minAda in created output (100 lovelaces here)"
-            { govState = Cardano.emptyGovernanceState
+            { govState = TxIntent.emptyGovernanceState
             , localStateUtxos = [ makeAdaOutput 0 testAddr.me 5 ]
             , evalScriptsCosts = \_ _ -> Ok []
             , fee = twoAdaFee
@@ -892,10 +1013,10 @@ failTxBuilding =
                         Expect.fail ("I didn’t expect this failure: " ++ Debug.toString error)
             )
         , failTxTest "when we send CNT without Ada"
-            { govState = Cardano.emptyGovernanceState
+            { govState = TxIntent.emptyGovernanceState
             , localStateUtxos =
                 [ makeAdaOutput 0 testAddr.me 5
-                , makeAsset 1 testAddr.me cat.policyIdStr cat.assetNameStr 3
+                , makeAsset 1 testAddr.me cat.policyId cat.assetNameStr 3
                 ]
             , evalScriptsCosts = \_ _ -> Ok []
             , fee = twoAdaFee
@@ -919,7 +1040,7 @@ failTxBuilding =
                         Expect.fail ("I didn’t expect this failure: " ++ Debug.toString error)
             )
         , failTxTest "when there are duplicated metadata tags (tag 0 here)"
-            { govState = Cardano.emptyGovernanceState
+            { govState = TxIntent.emptyGovernanceState
             , localStateUtxos = [ makeAdaOutput 0 testAddr.me 5 ]
             , evalScriptsCosts = \_ _ -> Ok []
             , fee = twoAdaFee
@@ -938,7 +1059,7 @@ failTxBuilding =
                         Expect.fail ("I didn’t expect this failure: " ++ Debug.toString error)
             )
         , failTxTest "when validity range is incorrect (start > end)"
-            { govState = Cardano.emptyGovernanceState
+            { govState = TxIntent.emptyGovernanceState
             , localStateUtxos = [ makeAdaOutput 0 testAddr.me 5 ]
             , evalScriptsCosts = \_ _ -> Ok []
             , fee = twoAdaFee
@@ -964,7 +1085,7 @@ failTxBuilding =
                     [] ->
                         0
 
-                    ( id, ref ) :: next ->
+                    ( id, ( ref, _ ) ) :: next ->
                         if ref == utxoBeingSpent then
                             id
 
@@ -1015,7 +1136,7 @@ failTxBuilding =
                 ]
           in
           failTxTest "when collateral is insufficient in: spend 2 ada from a plutus script holding 4 ada"
-            { govState = Cardano.emptyGovernanceState
+            { govState = TxIntent.emptyGovernanceState
             , localStateUtxos = localStateUtxos
             , evalScriptsCosts = Uplc.evalScriptsCosts Uplc.defaultVmConfig
             , fee = twoAdaFee
@@ -1027,7 +1148,7 @@ failTxBuilding =
                         { spentInput = utxoBeingSpent
                         , datumWitness = Nothing
                         , plutusScriptWitness =
-                            { script = ( PlutusV3, WitnessByValue lock.scriptBytes )
+                            { script = ( PlutusV3, Witness.ByValue lock.scriptBytes )
                             , redeemerData = redeemer
                             , requiredSigners = [ myKeyCred ]
                             }
@@ -1070,7 +1191,7 @@ failTxBuilding =
                 ]
           in
           failTxTest "when providing the wrong native script witness"
-            { govState = Cardano.emptyGovernanceState
+            { govState = TxIntent.emptyGovernanceState
             , localStateUtxos = localStateUtxos
             , evalScriptsCosts = \_ _ -> Ok []
             , fee = twoAdaFee
@@ -1079,14 +1200,17 @@ failTxBuilding =
                 [ Spend <|
                     FromNativeScript
                         { spentInput = utxoBeingSpent
-                        , nativeScriptWitness = WitnessByValue wrongScript
+                        , nativeScriptWitness =
+                            { script = Witness.ByValue wrongScript
+                            , expectedSigners = []
+                            }
                         }
                 , SendTo testAddr.me (Value.onlyLovelace <| ada 4)
                 ]
             }
             (\error ->
                 case error of
-                    ScriptHashMismatch _ _ ->
+                    WitnessError (Witness.ScriptHashMismatch _ _) ->
                         Expect.pass
 
                     _ ->
@@ -1126,7 +1250,7 @@ failTxBuilding =
                 ]
           in
           failTxTest "when providing the wrong native script witness by reference"
-            { govState = Cardano.emptyGovernanceState
+            { govState = TxIntent.emptyGovernanceState
             , localStateUtxos = localStateUtxos
             , evalScriptsCosts = \_ _ -> Ok []
             , fee = twoAdaFee
@@ -1135,14 +1259,17 @@ failTxBuilding =
                 [ Spend <|
                     FromNativeScript
                         { spentInput = utxoBeingSpent
-                        , nativeScriptWitness = WitnessByReference utxoWithScriptRef
+                        , nativeScriptWitness =
+                            { script = Witness.ByReference utxoWithScriptRef
+                            , expectedSigners = []
+                            }
                         }
                 , SendTo testAddr.me (Value.onlyLovelace <| ada 4)
                 ]
             }
             (\error ->
                 case error of
-                    ScriptHashMismatch _ _ ->
+                    WitnessError (Witness.ScriptHashMismatch _ _) ->
                         Expect.pass
 
                     _ ->
@@ -1176,7 +1303,7 @@ failTxBuilding =
                 ]
           in
           failTxTest "when providing a witness by reference with no reference script"
-            { govState = Cardano.emptyGovernanceState
+            { govState = TxIntent.emptyGovernanceState
             , localStateUtxos = localStateUtxos
             , evalScriptsCosts = \_ _ -> Ok []
             , fee = twoAdaFee
@@ -1185,14 +1312,17 @@ failTxBuilding =
                 [ Spend <|
                     FromNativeScript
                         { spentInput = utxoBeingSpent
-                        , nativeScriptWitness = WitnessByReference utxoWithoutScriptRef
+                        , nativeScriptWitness =
+                            { script = Witness.ByReference utxoWithoutScriptRef
+                            , expectedSigners = []
+                            }
                         }
                 , SendTo testAddr.me (Value.onlyLovelace <| ada 4)
                 ]
             }
             (\error ->
                 case error of
-                    MissingReferenceScript _ ->
+                    WitnessError (Witness.MissingReferenceScript _) ->
                         Expect.pass
 
                     _ ->
@@ -1205,7 +1335,7 @@ failTxBuilding =
                 Script.plutusScriptFromBytes PlutusV3 <| Bytes.fromHexUnchecked ""
 
             wrongScript =
-                ( PlutusV2, WitnessByValue <| Bytes.fromHexUnchecked "" )
+                ( PlutusV2, Witness.ByValue <| Bytes.fromHexUnchecked "" )
 
             utxoBeingSpent =
                 makeRef "previouslySentToLock" 0
@@ -1222,7 +1352,7 @@ failTxBuilding =
                 ]
           in
           failTxTest "when providing the wrong plutus script witness"
-            { govState = Cardano.emptyGovernanceState
+            { govState = TxIntent.emptyGovernanceState
             , localStateUtxos = localStateUtxos
             , evalScriptsCosts = \_ _ -> Ok []
             , fee = twoAdaFee
@@ -1243,7 +1373,7 @@ failTxBuilding =
             }
             (\error ->
                 case error of
-                    ScriptHashMismatch _ _ ->
+                    WitnessError (Witness.ScriptHashMismatch _ _) ->
                         Expect.pass
 
                     _ ->
@@ -1256,10 +1386,10 @@ failTxBuilding =
                 Script.plutusScriptFromBytes PlutusV3 <| Bytes.fromHexUnchecked ""
 
             scriptWitness =
-                ( PlutusV3, WitnessByValue <| Bytes.fromHexUnchecked "" )
+                ( PlutusV3, Witness.ByValue <| Bytes.fromHexUnchecked "" )
 
             extraneousDatumWitness =
-                WitnessByValue <| Data.List []
+                Witness.ByValue <| Data.List []
 
             utxoBeingSpent =
                 makeRef "previouslySentToLock" 0
@@ -1278,7 +1408,7 @@ failTxBuilding =
                 ]
           in
           failTxTest "when there is an extraneous datum witness (no datum at script utxo)"
-            { govState = Cardano.emptyGovernanceState
+            { govState = TxIntent.emptyGovernanceState
             , localStateUtxos = localStateUtxos
             , evalScriptsCosts = \_ _ -> Ok []
             , fee = twoAdaFee
@@ -1301,7 +1431,7 @@ failTxBuilding =
             }
             (\error ->
                 case error of
-                    ExtraneousDatumWitness _ _ ->
+                    WitnessError (Witness.ExtraneousDatum _ _) ->
                         Expect.pass
 
                     _ ->
@@ -1314,10 +1444,10 @@ failTxBuilding =
                 Script.plutusScriptFromBytes PlutusV3 <| Bytes.fromHexUnchecked ""
 
             scriptWitness =
-                ( PlutusV3, WitnessByValue <| Bytes.fromHexUnchecked "" )
+                ( PlutusV3, Witness.ByValue <| Bytes.fromHexUnchecked "" )
 
             extraneousDatumWitness =
-                WitnessByValue <| Data.List []
+                Witness.ByValue <| Data.List []
 
             utxoBeingSpent =
                 makeRef "previouslySentToLock" 0
@@ -1336,7 +1466,7 @@ failTxBuilding =
                 ]
           in
           failTxTest "when there is an extraneous datum witness (datum value already at script utxo)"
-            { govState = Cardano.emptyGovernanceState
+            { govState = TxIntent.emptyGovernanceState
             , localStateUtxos = localStateUtxos
             , evalScriptsCosts = \_ _ -> Ok []
             , fee = twoAdaFee
@@ -1359,7 +1489,7 @@ failTxBuilding =
             }
             (\error ->
                 case error of
-                    ExtraneousDatumWitness _ _ ->
+                    WitnessError (Witness.ExtraneousDatum _ _) ->
                         Expect.pass
 
                     _ ->
@@ -1372,7 +1502,7 @@ failTxBuilding =
                 Script.plutusScriptFromBytes PlutusV3 <| Bytes.fromHexUnchecked ""
 
             scriptWitness =
-                ( PlutusV3, WitnessByValue <| Bytes.fromHexUnchecked "" )
+                ( PlutusV3, Witness.ByValue <| Bytes.fromHexUnchecked "" )
 
             utxoBeingSpent =
                 makeRef "previouslySentToLock" 0
@@ -1394,7 +1524,7 @@ failTxBuilding =
                 ]
           in
           failTxTest "when the datum witness is missing"
-            { govState = Cardano.emptyGovernanceState
+            { govState = TxIntent.emptyGovernanceState
             , localStateUtxos = localStateUtxos
             , evalScriptsCosts = \_ _ -> Ok []
             , fee = twoAdaFee
@@ -1415,7 +1545,7 @@ failTxBuilding =
             }
             (\error ->
                 case error of
-                    MissingDatumWitness _ _ ->
+                    WitnessError (Witness.MissingDatum _ _) ->
                         Expect.pass
 
                     _ ->
@@ -1428,7 +1558,7 @@ failTxBuilding =
                 Script.plutusScriptFromBytes PlutusV3 <| Bytes.fromHexUnchecked ""
 
             scriptWitness =
-                ( PlutusV3, WitnessByValue <| Bytes.fromHexUnchecked "" )
+                ( PlutusV3, Witness.ByValue <| Bytes.fromHexUnchecked "" )
 
             utxoBeingSpent =
                 makeRef "previouslySentToLock" 0
@@ -1460,7 +1590,7 @@ failTxBuilding =
                 ]
           in
           failTxTest "when the datum witness is missing (by ref)"
-            { govState = Cardano.emptyGovernanceState
+            { govState = TxIntent.emptyGovernanceState
             , localStateUtxos = localStateUtxos
             , evalScriptsCosts = \_ _ -> Ok []
             , fee = twoAdaFee
@@ -1469,7 +1599,7 @@ failTxBuilding =
                 [ Spend <|
                     FromPlutusScript
                         { spentInput = utxoBeingSpent
-                        , datumWitness = Just <| WitnessByReference utxoRefWithoutDatum
+                        , datumWitness = Just <| Witness.ByReference utxoRefWithoutDatum
                         , plutusScriptWitness =
                             { script = scriptWitness
                             , redeemerData = \_ -> Data.List []
@@ -1481,7 +1611,7 @@ failTxBuilding =
             }
             (\error ->
                 case error of
-                    MissingDatumWitness _ _ ->
+                    WitnessError (Witness.MissingDatum _ _) ->
                         Expect.pass
 
                     _ ->
@@ -1494,7 +1624,7 @@ failTxBuilding =
                 Script.plutusScriptFromBytes PlutusV3 <| Bytes.fromHexUnchecked ""
 
             scriptWitness =
-                ( PlutusV3, WitnessByValue <| Bytes.fromHexUnchecked "" )
+                ( PlutusV3, Witness.ByValue <| Bytes.fromHexUnchecked "" )
 
             utxoBeingSpent =
                 makeRef "previouslySentToLock" 0
@@ -1519,7 +1649,7 @@ failTxBuilding =
                 ]
           in
           failTxTest "when the datum witness is not matching (by value)"
-            { govState = Cardano.emptyGovernanceState
+            { govState = TxIntent.emptyGovernanceState
             , localStateUtxos = localStateUtxos
             , evalScriptsCosts = \_ _ -> Ok []
             , fee = twoAdaFee
@@ -1528,7 +1658,7 @@ failTxBuilding =
                 [ Spend <|
                     FromPlutusScript
                         { spentInput = utxoBeingSpent
-                        , datumWitness = Just <| WitnessByValue wrongDatum
+                        , datumWitness = Just <| Witness.ByValue wrongDatum
                         , plutusScriptWitness =
                             { script = scriptWitness
                             , redeemerData = \_ -> Data.List []
@@ -1540,7 +1670,7 @@ failTxBuilding =
             }
             (\error ->
                 case error of
-                    DatumHashMismatch _ _ ->
+                    WitnessError (Witness.DatumHashMismatch _ _) ->
                         Expect.pass
 
                     _ ->
@@ -1553,7 +1683,7 @@ failTxBuilding =
                 Script.plutusScriptFromBytes PlutusV3 <| Bytes.fromHexUnchecked ""
 
             scriptWitness =
-                ( PlutusV3, WitnessByValue <| Bytes.fromHexUnchecked "" )
+                ( PlutusV3, Witness.ByValue <| Bytes.fromHexUnchecked "" )
 
             utxoBeingSpent =
                 makeRef "previouslySentToLock" 0
@@ -1588,7 +1718,7 @@ failTxBuilding =
                 ]
           in
           failTxTest "when the datum witness is not matching (by ref)"
-            { govState = Cardano.emptyGovernanceState
+            { govState = TxIntent.emptyGovernanceState
             , localStateUtxos = localStateUtxos
             , evalScriptsCosts = \_ _ -> Ok []
             , fee = twoAdaFee
@@ -1597,7 +1727,7 @@ failTxBuilding =
                 [ Spend <|
                     FromPlutusScript
                         { spentInput = utxoBeingSpent
-                        , datumWitness = Just <| WitnessByReference utxoRef
+                        , datumWitness = Just <| Witness.ByReference utxoRef
                         , plutusScriptWitness =
                             { script = scriptWitness
                             , redeemerData = \_ -> Data.List []
@@ -1609,7 +1739,7 @@ failTxBuilding =
             }
             (\error ->
                 case error of
-                    DatumHashMismatch _ _ ->
+                    WitnessError (Witness.DatumHashMismatch _ _) ->
                         Expect.pass
 
                     _ ->
@@ -1658,6 +1788,33 @@ newTx =
 -- Test data
 
 
+indexedScript =
+    -- A V3 script where the Mint redeemer checks that all redeemers in the transaction
+    -- are just Integers corresponding to the index in the redeemers’ list of the script context.
+    let
+        plutusScript =
+            Script.plutusScriptFromBytes PlutusV3 <|
+                Bytes.fromHexUnchecked
+                    "59041201010029800aba4aba2aba1aba0aab9faab9eaab9dab9cab9a4888888888c96600264646644b30013370e900018041baa0018cc004dd7180618049baa00199198008009bab300d300e300e300e300e300e300e300e300e300e300a3754601a00a44b30010018a5eb8226601a6ea0c966002003008804402226eb40060108088c02cc038004cc008008c03c00500c4dc02400291129980519b964910b72656465656d6572733a20003732646466446530010019ba7007a44100400444464b30010038991919911980500119b8a48901280059800800c4cdc52441035b5d2900006899b8a489035b5f20009800800ccdc52441025d2900006914c00402a00530070014029229800805400a002805100920325980099b880014803a266e0120f2010018acc004cdc4000a41000513370066e01208014001480362c80990131bac3016002375a60280026466ec0dd4180a0009ba73015001375400713259800800c4cdc52441027b7d00003899b8a489037b5f20003232330010010032259800800c400e264b30010018994c00402a6032003337149101023a200098008054c06800600a805100a180e00144ca6002015301900199b8a489023a200098008054c068006600e66008008004805100a180e0012034301c001406466e29220102207d0000340586eac00e264b3001001899b8a489025b5d00003899b8a489035b5f20009800800ccdc52441015d00003914c00401e0053004001401d229800803c00a0028039006202c3758007133006375a0060051323371491102682700329800800cc02cdc68014cdc52450127000044004444b300133710004900044006264664530010069808002ccdc599b800025980099b88002480522903045206e406066e2ccdc0000acc004cdc4000a4029148182290372030004401866e0c00520203370c002901019b8e00400240546eb800d0191b8a4881022c2000223233001001003225980099b8700148002266e292210130000038acc004cdc4000a40011337149101012d0033002002337029000000c4cc014cdc2000a402866e2ccdc019b85001480512060003403c80788888c8cc004004014896600200310058992cc004006266008603000400d1330053018002330030030014058603000280a8c0040048896600266e2400920008800c6600200733708004900a4cdc599b803370a004900a240c0002801900c099baf374e6464660020029000112cc004cdc4001800c52f5c113301137500026600400466e00005200240306002646600200200644b30010018a40011337009001198010011809000a01e374e0048a5140186014002601460160026014002600a6ea802e293454cc00d2411856616c696461746f722072657475726e65642066616c7365001365640082a6600492011765787065637420696e6465783a20496e646578203d2072001601"
+
+        hash =
+            Bytes.fromHexUnchecked "a790039850292ae166a5b79ff6bea7ac03cdc3337ce9107150fda0e6"
+    in
+    { plutus = plutusScript
+    , hash = hash
+    , address = Address.script Testnet hash
+    , witness =
+        \index ->
+            { script =
+                ( Script.plutusVersion plutusScript
+                , Witness.ByValue <| Script.cborWrappedBytes plutusScript
+                )
+            , redeemerData = \_ -> Data.Int <| Integer.fromSafeInt index
+            , requiredSigners = []
+            }
+    }
+
+
 testAddr =
     { me = makeWalletAddress "me"
     , you = makeWalletAddress "you"
@@ -1665,8 +1822,11 @@ testAddr =
 
 
 dog =
-    { policyId = dummyCredentialHash "dog"
-    , policyIdStr = "dog"
+    let
+        dummyNativeScript =
+            Script.Native <| Script.ScriptAny [ Script.ScriptAll [], Script.ScriptPubkey <| dummyCredentialHash "dog" ]
+    in
+    { policyId = Script.hash dummyNativeScript
     , assetName = Bytes.fromText "yksoh"
     , assetNameStr = "yksoh"
     , scriptRef = makeRef "dogScriptRef" 0
@@ -1674,14 +1834,17 @@ dog =
         { address = makeAddress "dogScriptRefAddress"
         , amount = Value.onlyLovelace (ada 5)
         , datumOption = Nothing
-        , referenceScript = Just <| Script.refFromScript <| Script.Native <| Script.ScriptAll [] -- dummy
+        , referenceScript = Just <| Script.refFromScript dummyNativeScript
         }
     }
 
 
 cat =
-    { policyId = dummyCredentialHash "cat"
-    , policyIdStr = "cat"
+    let
+        dummyNativeScript =
+            Script.Native <| Script.ScriptAny [ Script.ScriptAll [], Script.ScriptPubkey <| dummyCredentialHash "cat" ]
+    in
+    { policyId = Script.hash dummyNativeScript
     , assetName = Bytes.fromText "felix"
     , assetNameStr = "felix"
     , scriptRef = makeRef "catScriptRef" 0
@@ -1689,7 +1852,7 @@ cat =
         { address = makeAddress "catScriptRefAddress"
         , amount = Value.onlyLovelace (ada 6)
         , datumOption = Nothing
-        , referenceScript = Just <| Script.refFromScript <| Script.Native <| Script.ScriptAll [] -- dummy
+        , referenceScript = Just <| Script.refFromScript dummyNativeScript
         }
     }
 
@@ -1736,7 +1899,7 @@ makeRef id index =
     }
 
 
-makeAsset : Int -> Address -> String -> String -> Int -> ( OutputReference, Output )
+makeAsset : Int -> Address -> Bytes PolicyId -> String -> Int -> ( OutputReference, Output )
 makeAsset index address policyId name amount =
     ( makeRef (String.fromInt index) index
     , { address = address
@@ -1754,9 +1917,9 @@ makeAdaOutput index address amount =
     )
 
 
-makeToken : String -> String -> Int -> Value
+makeToken : Bytes PolicyId -> String -> Int -> Value
 makeToken policyId name amount =
-    Value.onlyToken (dummyCredentialHash policyId) (Bytes.fromText name) (Natural.fromSafeInt amount)
+    Value.onlyToken policyId (Bytes.fromText name) (Natural.fromSafeInt amount)
 
 
 ada : Int -> Natural

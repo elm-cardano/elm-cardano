@@ -2,7 +2,6 @@ port module Main exposing (main)
 
 import Browser
 import Bytes.Comparable as Bytes exposing (Bytes)
-import Cardano exposing (CertificateIntent(..), CredentialWitness(..), Fee(..), ScriptWitness(..), SpendSource(..), TxIntent(..), VoterWitness(..), WitnessSource(..))
 import Cardano.Address as Address exposing (Address, Credential(..), CredentialHash, NetworkId(..), StakeCredential(..))
 import Cardano.Cip30 as Cip30
 import Cardano.CoinSelection as CoinSelection
@@ -10,9 +9,11 @@ import Cardano.Data as Data
 import Cardano.Gov exposing (CostModels, Drep(..), Vote(..))
 import Cardano.Script exposing (PlutusVersion(..), ScriptCbor)
 import Cardano.Transaction as Transaction exposing (Transaction)
+import Cardano.TxIntent as TxIntent exposing (CertificateIntent(..), Fee(..), SpendSource(..), TxIntent(..))
 import Cardano.Uplc as Uplc
 import Cardano.Utxo as Utxo exposing (DatumOption(..), Output, OutputReference, TransactionId)
 import Cardano.Value
+import Cardano.Witness as Witness
 import Dict.Any
 import Html exposing (Html, button, div, text)
 import Html.Attributes exposing (height, src)
@@ -189,7 +190,7 @@ update msg model =
                     let
                         -- Update the known UTxOs set after the given Tx is processed
                         { updatedState, spent, created } =
-                            Cardano.updateLocalState txId tx ctx.localStateUtxos
+                            TxIntent.updateLocalState txId tx ctx.localStateUtxos
 
                         -- Also update specifically our wallet UTxOs knowledge
                         -- This isn’t purely necessary, but just to keep a consistent wallet state
@@ -413,9 +414,9 @@ update msg model =
                     , IssueCertificate <|
                         RegisterDrep
                             { drep =
-                                WithScript lockScript.hash <|
-                                    PlutusWitness
-                                        { script = ( PlutusV3, WitnessByValue lockScript.compiledCode )
+                                Witness.WithScript lockScript.hash <|
+                                    Witness.Plutus
+                                        { script = ( PlutusV3, Witness.ByValue lockScript.compiledCode )
                                         , redeemerData = \_ -> Data.Int Integer.zero
                                         , requiredSigners = []
                                         }
@@ -423,8 +424,8 @@ update msg model =
                             , info = Nothing
                             }
                     ]
-                        |> Cardano.finalizeAdvanced
-                            { govState = Cardano.emptyGovernanceState
+                        |> TxIntent.finalizeAdvanced
+                            { govState = TxIntent.emptyGovernanceState
                             , localStateUtxos = context.localStateUtxos
                             , coinSelectionAlgo = CoinSelection.largestFirst
                             , evalScriptsCosts = Uplc.evalScriptsCosts Uplc.defaultVmConfig
@@ -441,7 +442,7 @@ update msg model =
                     )
 
                 Err err ->
-                    ( ProtocolParamsLoaded w lockScript feeProvider protocolParams { errors = Debug.toString err }
+                    ( ProtocolParamsLoaded w lockScript feeProvider protocolParams { errors = TxIntent.errorToString err }
                     , Cmd.none
                     )
 
@@ -450,10 +451,10 @@ update msg model =
                 -- Create voting transaction using the script
                 voteTxAttempt =
                     [ Vote
-                        (WithDrepCred <|
-                            WithScript ctx.lockScript.hash <|
-                                PlutusWitness
-                                    { script = ( PlutusV3, WitnessByValue ctx.lockScript.compiledCode )
+                        (Witness.WithDrepCred <|
+                            Witness.WithScript ctx.lockScript.hash <|
+                                Witness.Plutus
+                                    { script = ( PlutusV3, Witness.ByValue ctx.lockScript.compiledCode )
                                     , redeemerData = \_ -> Data.Int Integer.zero
                                     , requiredSigners = []
                                     }
@@ -468,8 +469,8 @@ update msg model =
                           }
                         ]
                     ]
-                        |> Cardano.finalizeAdvanced
-                            { govState = Cardano.emptyGovernanceState
+                        |> TxIntent.finalizeAdvanced
+                            { govState = TxIntent.emptyGovernanceState
                             , localStateUtxos = ctx.localStateUtxos
                             , coinSelectionAlgo = CoinSelection.largestFirst
                             , evalScriptsCosts = Uplc.evalScriptsCosts Uplc.defaultVmConfig
@@ -490,7 +491,7 @@ update msg model =
                     )
 
                 Err err ->
-                    ( TxSubmitted ctx action { txId = txId, errors = Debug.toString err }
+                    ( TxSubmitted ctx action { txId = txId, errors = TxIntent.errorToString err }
                     , Cmd.none
                     )
 
@@ -505,9 +506,9 @@ update msg model =
                     [ IssueCertificate <|
                         UnregisterDrep
                             { drep =
-                                WithScript ctx.lockScript.hash <|
-                                    PlutusWitness
-                                        { script = ( PlutusV3, WitnessByValue ctx.lockScript.compiledCode )
+                                Witness.WithScript ctx.lockScript.hash <|
+                                    Witness.Plutus
+                                        { script = ( PlutusV3, Witness.ByValue ctx.lockScript.compiledCode )
                                         , redeemerData = \_ -> Data.Int Integer.zero
                                         , requiredSigners = []
                                         }
@@ -516,8 +517,8 @@ update msg model =
                     , SendTo ctx.loadedWallet.changeAddress <|
                         Cardano.Value.onlyLovelace refund
                     ]
-                        |> Cardano.finalizeAdvanced
-                            { govState = Cardano.emptyGovernanceState
+                        |> TxIntent.finalizeAdvanced
+                            { govState = TxIntent.emptyGovernanceState
                             , localStateUtxos = ctx.localStateUtxos
                             , coinSelectionAlgo = CoinSelection.largestFirst
                             , evalScriptsCosts = Uplc.evalScriptsCosts Uplc.defaultVmConfig
@@ -534,7 +535,7 @@ update msg model =
                     )
 
                 Err err ->
-                    ( TxSubmitted ctx action { txId = txId, errors = Debug.toString err }
+                    ( TxSubmitted ctx action { txId = txId, errors = TxIntent.errorToString err }
                     , Cmd.none
                     )
 
@@ -681,7 +682,7 @@ displayErrors err =
         text ""
 
     else
-        div [] [ text <| "ERRORS: " ++ err ]
+        Html.pre [] [ text <| "ERRORS: " ++ err ]
 
 
 viewLoadedWallet : LoadedWallet -> List (Html msg)

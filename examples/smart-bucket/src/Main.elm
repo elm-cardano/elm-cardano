@@ -2,15 +2,16 @@ port module Main exposing (..)
 
 import Browser
 import Bytes.Comparable as Bytes exposing (Bytes)
-import Cardano exposing (SpendSource(..), TxIntent(..), WitnessSource(..))
 import Cardano.Address as Address exposing (Address, Credential(..), CredentialHash, NetworkId(..))
 import Cardano.Cip30 as Cip30
 import Cardano.Data as Data
 import Cardano.MultiAsset exposing (AssetName)
 import Cardano.Script exposing (PlutusVersion(..), ScriptCbor)
 import Cardano.Transaction as Tx exposing (Transaction)
+import Cardano.TxIntent as TxIntent exposing (SpendSource(..), TxIntent(..))
 import Cardano.Utxo as Utxo exposing (DatumOption(..), Output, OutputReference, TransactionId)
 import Cardano.Value as Value
+import Cardano.Witness as Witness
 import Dict.Any
 import Html exposing (Html, button, div, text)
 import Html.Attributes exposing (height, src)
@@ -18,6 +19,7 @@ import Html.Events exposing (onClick)
 import Http
 import Integer
 import Json.Decode as JD exposing (Decoder, Value)
+import List.Extra
 import Natural
 
 
@@ -153,7 +155,7 @@ update msg model =
                     let
                         -- Update the known UTxOs set after the given Tx is processed
                         { updatedState, spent, created } =
-                            Cardano.updateLocalState txId tx ctx.localStateUtxos
+                            TxIntent.updateLocalState txId tx ctx.localStateUtxos
 
                         -- Also update specifically our wallet UTxOs knowledge
                         -- This isn’t purely necessary, but just to keep a consistent wallet state
@@ -293,7 +295,7 @@ update msg model =
                         let
                             -- The input index is easy to find, just look for the correct ref in inputs
                             input_bucket_index =
-                                findIndex (\ref -> ref == bucketRef) inputs
+                                List.Extra.findIndex (\( ref, _ ) -> ref == bucketRef) inputs
                                     -- Put a huge default, just to make sure it’s found
                                     |> Maybe.withDefault 7000
                                     |> Integer.fromSafeInt
@@ -311,7 +313,7 @@ update msg model =
                     let
                         -- The input index is easy to find, just look for the correct ref
                         input_bucket_index =
-                            findIndex (\ref -> ref == bucketRef) inputs
+                            List.Extra.findIndex (\( ref, _ ) -> ref == bucketRef) inputs
                                 -- Put a huge default, just to make sure it’s found
                                 |> Maybe.withDefault 8000
 
@@ -319,7 +321,7 @@ update msg model =
                         -- it is the only one at the script address,
                         -- that contains a datum with the same owner as the input
                         output_bucket_index =
-                            findIndex (\o -> extractOwner o == bucketOwner) outputs
+                            List.Extra.findIndex (\o -> extractOwner o == bucketOwner) outputs
                                 -- Put a huge default, just to make sure it’s found
                                 |> Maybe.withDefault 9000
                     in
@@ -334,7 +336,7 @@ update msg model =
                             { spentInput = bucketRef
                             , datumWitness = Nothing
                             , plutusScriptWitness =
-                                { script = ( PlutusV3, WitnessByValue ctx.lockScript.compiledCode )
+                                { script = ( PlutusV3, Witness.ByValue ctx.lockScript.compiledCode )
                                 , redeemerData = redeemerData
 
                                 -- NO SIGNATURE: it’s the actual purpose of these "buckets"
@@ -345,7 +347,7 @@ update msg model =
                     , Spend <| FromWallet { address = ctx.loadedWallet.changeAddress, value = bucketValueIncrease, guaranteedUtxos = [] }
                     , SendToOutputAdvanced outputBucket
                     ]
-                        |> Cardano.finalize ctx.localStateUtxos []
+                        |> TxIntent.finalize ctx.localStateUtxos []
             in
             case reuseBucketTxAttempt of
                 Ok { tx } ->
@@ -354,7 +356,7 @@ update msg model =
                     )
 
                 Err err ->
-                    ( TxSubmitted ctx { txId = txId, errors = Debug.toString err }
+                    ( TxSubmitted ctx { txId = txId, errors = TxIntent.errorToString err }
                     , Cmd.none
                     )
 
@@ -387,7 +389,7 @@ createBucket ({ localStateUtxos, myKeyCred, scriptAddress, loadedWallet, lockScr
                 , referenceScript = Nothing
                 }
             ]
-                |> Cardano.finalize localStateUtxos []
+                |> TxIntent.finalize localStateUtxos []
     in
     case createBucketTxAttempt of
         Ok { tx } ->
@@ -396,7 +398,7 @@ createBucket ({ localStateUtxos, myKeyCred, scriptAddress, loadedWallet, lockScr
             )
 
         Err err ->
-            ( BlueprintLoaded loadedWallet lockScript { errors = Debug.toString err }
+            ( BlueprintLoaded loadedWallet lockScript { errors = TxIntent.errorToString err }
             , Cmd.none
             )
 
@@ -466,7 +468,7 @@ displayErrors err =
         text ""
 
     else
-        div [] [ text <| "ERRORS: " ++ err ]
+        Html.pre [] [ text <| "ERRORS: " ++ err ]
 
 
 viewLoadedWallet : LoadedWallet -> List (Html msg)
@@ -495,28 +497,3 @@ viewAvailableWallets wallets =
             div [] [ walletIcon w, text (walletDescription w), connectButton w ]
     in
     div [] (List.map walletRow wallets)
-
-
-
--- #########################################################
--- Helpers
--- #########################################################
-
-
-findIndex : (a -> Bool) -> List a -> Maybe Int
-findIndex =
-    findIndexHelp 0
-
-
-findIndexHelp : Int -> (a -> Bool) -> List a -> Maybe Int
-findIndexHelp index predicate list =
-    case list of
-        [] ->
-            Nothing
-
-        x :: xs ->
-            if predicate x then
-                Just index
-
-            else
-                findIndexHelp (index + 1) predicate xs

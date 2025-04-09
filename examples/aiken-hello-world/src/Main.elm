@@ -2,14 +2,15 @@ port module Main exposing (..)
 
 import Browser
 import Bytes.Comparable as Bytes exposing (Bytes)
-import Cardano exposing (SpendSource(..), TxIntent(..), WitnessSource(..))
 import Cardano.Address as Address exposing (Address, Credential(..), CredentialHash, NetworkId(..))
 import Cardano.Cip30 as Cip30
 import Cardano.Data as Data
 import Cardano.Script exposing (PlutusVersion(..), ScriptCbor)
 import Cardano.Transaction as Tx exposing (Transaction)
+import Cardano.TxIntent as TxIntent exposing (SpendSource(..), TxIntent(..))
 import Cardano.Utxo as Utxo exposing (DatumOption(..), Output, OutputReference, TransactionId)
 import Cardano.Value
+import Cardano.Witness as Witness
 import Dict.Any
 import Html exposing (Html, button, div, text)
 import Html.Attributes exposing (height, src)
@@ -146,7 +147,7 @@ update msg model =
                     let
                         -- Update the known UTxOs set after the given Tx is processed
                         { updatedState, spent, created } =
-                            Cardano.updateLocalState txId tx ctx.localStateUtxos
+                            TxIntent.updateLocalState txId tx ctx.localStateUtxos
 
                         -- Also update specifically our wallet UTxOs knowledge
                         -- This isn’t purely necessary, but just to keep a consistent wallet state
@@ -256,7 +257,7 @@ update msg model =
                     Cardano.Value.onlyLovelace (Natural.fromSafeString "2000000")
 
                 redeemer =
-                    Data.Constr Natural.zero [ Data.Bytes (Bytes.fromText "Hello, World!") ]
+                    Data.Constr Natural.zero [ Data.Bytes (Bytes.fromText "Hell, World!") ]
 
                 unlockTxAttempt =
                     [ Spend
@@ -265,7 +266,7 @@ update msg model =
                             { spentInput = OutputReference txId 0
                             , datumWitness = Nothing
                             , plutusScriptWitness =
-                                { script = ( PlutusV3, WitnessByValue ctx.lockScript.compiledCode )
+                                { script = ( PlutusV3, Witness.ByValue ctx.lockScript.compiledCode )
                                 , redeemerData = \_ -> redeemer
                                 , requiredSigners = [ ctx.myKeyCred ]
                                 }
@@ -273,7 +274,7 @@ update msg model =
                         )
                     , SendTo ctx.loadedWallet.changeAddress twoAda
                     ]
-                        |> Cardano.finalize ctx.localStateUtxos []
+                        |> TxIntent.finalize ctx.localStateUtxos []
             in
             case unlockTxAttempt of
                 Ok { tx } ->
@@ -282,7 +283,7 @@ update msg model =
                     )
 
                 Err err ->
-                    ( TxSubmitted ctx action { txId = txId, errors = Debug.toString err }
+                    ( TxSubmitted ctx action { txId = txId, errors = TxIntent.errorToString err }
                     , Cmd.none
                     )
 
@@ -312,7 +313,7 @@ lock ({ localStateUtxos, myKeyCred, scriptAddress, loadedWallet, lockScript } as
                 , referenceScript = Nothing
                 }
             ]
-                |> Cardano.finalize localStateUtxos []
+                |> TxIntent.finalize localStateUtxos []
     in
     case lockTxAttempt of
         Ok { tx } ->
@@ -321,7 +322,7 @@ lock ({ localStateUtxos, myKeyCred, scriptAddress, loadedWallet, lockScript } as
             )
 
         Err err ->
-            ( BlueprintLoaded loadedWallet lockScript { errors = Debug.toString err }
+            ( BlueprintLoaded loadedWallet lockScript { errors = TxIntent.errorToString err }
             , Cmd.none
             )
 
@@ -399,7 +400,7 @@ displayErrors err =
         text ""
 
     else
-        div [] [ text <| "ERRORS: " ++ err ]
+        Html.pre [] [ text <| "ERRORS: " ++ err ]
 
 
 viewLoadedWallet : LoadedWallet -> List (Html msg)

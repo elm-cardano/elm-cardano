@@ -1,5 +1,5 @@
 module Cardano.Script exposing
-    ( Script(..), NativeScript(..), PlutusScript, PlutusVersion(..), ScriptCbor, extractSigners, hash, fromBech32, toBech32
+    ( Script(..), NativeScript(..), PlutusScript, PlutusVersion(..), ScriptCbor, extractSigners, isMultisigSatisfied, hash, fromBech32, toBech32
     , Reference, refFromBytes, refFromScript, refBytes, refScript, refHash
     , nativeScriptFromBytes, nativeScriptBytes
     , plutusScriptFromBytes, plutusVersion, cborWrappedBytes
@@ -9,7 +9,7 @@ module Cardano.Script exposing
 
 {-| Script
 
-@docs Script, NativeScript, PlutusScript, PlutusVersion, ScriptCbor, extractSigners, hash, fromBech32, toBech32
+@docs Script, NativeScript, PlutusScript, PlutusVersion, ScriptCbor, extractSigners, isMultisigSatisfied, hash, fromBech32, toBech32
 
 @docs Reference, refFromBytes, refFromScript, refBytes, refScript, refHash
 
@@ -42,7 +42,9 @@ import Cbor.Encode as E
 import Cbor.Encode.Extra as EE
 import Dict exposing (Dict)
 import Json.Decode as JD
+import List.Extra
 import Natural exposing (Natural)
+import Set exposing (Set)
 
 
 {-| Script Reference type, to be used to store a script into UTxOs.
@@ -202,6 +204,36 @@ extractSignersHelper nativeScript accum =
 
         InvalidHereafter _ ->
             accum
+
+
+{-| Validate the multisig logic with the provided signers.
+The temporal aspect of the script is not considered (evaluates True).
+-}
+isMultisigSatisfied : List (Bytes CredentialHash) -> NativeScript -> Bool
+isMultisigSatisfied signers nativeScript =
+    isMultisigSatisfiedHelper (Set.fromList <| List.map Bytes.toHex signers) nativeScript
+
+
+isMultisigSatisfiedHelper : Set String -> NativeScript -> Bool
+isMultisigSatisfiedHelper signers nativeScript =
+    case nativeScript of
+        ScriptPubkey key ->
+            Set.member (Bytes.toHex key) signers
+
+        ScriptAll subScripts ->
+            List.all (isMultisigSatisfiedHelper signers) subScripts
+
+        ScriptAny subScripts ->
+            List.any (isMultisigSatisfiedHelper signers) subScripts
+
+        ScriptNofK n subScripts ->
+            List.Extra.count (isMultisigSatisfiedHelper signers) subScripts >= n
+
+        InvalidBefore _ ->
+            True
+
+        InvalidHereafter _ ->
+            True
 
 
 {-| Get the bytes representation of a native script.

@@ -3,16 +3,17 @@ port module Main exposing (..)
 import Browser
 import Bytes.Comparable as Bytes exposing (Bytes)
 import Bytes.Map as BytesMap
-import Cardano exposing (ScriptWitness(..), SpendSource(..), TxIntent(..), WitnessSource(..))
 import Cardano.Address as Address exposing (Address, Credential(..), CredentialHash, NetworkId(..))
 import Cardano.Cip30 as Cip30
 import Cardano.Data as Data
 import Cardano.MultiAsset exposing (AssetName)
 import Cardano.Script as Script exposing (PlutusVersion(..), ScriptCbor)
 import Cardano.Transaction as Tx exposing (Transaction)
+import Cardano.TxIntent as TxIntent exposing (SpendSource(..), TxIntent(..))
 import Cardano.Uplc as Uplc
 import Cardano.Utxo as Utxo exposing (DatumOption(..), Output, OutputReference, TransactionId, outputReferenceToData)
 import Cardano.Value
+import Cardano.Witness as Witness
 import Dict.Any
 import Html exposing (Html, button, div, text)
 import Html.Attributes as HA exposing (height, src)
@@ -199,7 +200,7 @@ update msg model =
                     let
                         -- Update the known UTxOs set after the given Tx is processed
                         { updatedState, spent, created } =
-                            Cardano.updateLocalState txId tx ctx.localStateUtxos
+                            TxIntent.updateLocalState txId tx ctx.localStateUtxos
 
                         -- Also update specifically our wallet UTxOs knowledge
                         -- This isn’t purely necessary, but just to keep a consistent wallet state
@@ -346,7 +347,7 @@ update msg model =
                             { spentInput = OutputReference txId 0
                             , datumWitness = Nothing
                             , plutusScriptWitness =
-                                { script = ( PlutusV3, WitnessByValue ctx.lockScript.compiledCode )
+                                { script = ( PlutusV3, Witness.ByValue ctx.lockScript.compiledCode )
                                 , redeemerData = \_ -> Data.Constr Natural.zero []
                                 , requiredSigners = []
                                 }
@@ -423,8 +424,7 @@ finalizeTx ctx mPrevTxId intents =
                     Locking
 
         txAttempt =
-            intents
-                |> Cardano.finalize ctx.localStateUtxos []
+            TxIntent.finalize ctx.localStateUtxos [] intents
     in
     case txAttempt of
         Ok { tx } ->
@@ -441,7 +441,7 @@ finalizeTx ctx mPrevTxId intents =
         Err err ->
             ( case mPrevTxId of
                 Nothing ->
-                    ParametersSet ctx { errors = Debug.toString err }
+                    ParametersSet ctx { errors = TxIntent.errorToString err }
 
                 Just txId ->
                     TxSubmitted ctx action { txId = txId, errors = Debug.toString err }
@@ -463,8 +463,8 @@ makeMintBurnIntent lockScript tokenName forMint =
         { policyId = lockScript.hash
         , assets = BytesMap.singleton tokenName mintQuantity
         , scriptWitness =
-            PlutusWitness
-                { script = ( PlutusV3, WitnessByValue lockScript.compiledCode )
+            Witness.Plutus
+                { script = ( PlutusV3, Witness.ByValue lockScript.compiledCode )
                 , redeemerData =
                     \_ ->
                         if forMint then
