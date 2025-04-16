@@ -1314,7 +1314,7 @@ preprocessCert certWithKeyF certWithScriptF { deposit, refund } cred preProcesse
 type alias ProcessedIntents =
     { freeInputs : Address.Dict Value
     , freeOutputs : Address.Dict Value
-    , guaranteedUtxos : Address.Dict (List ( OutputReference, Output ))
+    , guaranteedUtxos : Utxo.RefDict Output
     , preSelected : { sum : Value, inputs : Utxo.RefDict (Maybe (TxContext -> Data)) }
     , preCreated : TxContext -> { sum : Value, outputs : List Output }
     , nativeScriptSources : List (Witness.Source NativeScript)
@@ -1370,24 +1370,15 @@ processBalanced govState localStateUtxos txIntents { preProcessedIntents, preSel
                 |> List.foldl MultiAsset.mintAdd MultiAsset.empty
                 |> MultiAsset.normalize Integer.isZero
 
-        guaranteedUtxos : Address.Dict (List ( OutputReference, Output ))
+        guaranteedUtxos : Utxo.RefDict Output
         guaranteedUtxos =
             preProcessedIntents.guaranteedUtxos
-                |> List.foldl
-                    (\ref acc ->
+                |> List.filterMap
+                    (\ref ->
                         Dict.Any.get ref localStateUtxos
-                            |> Maybe.map
-                                (\output ->
-                                    case Dict.Any.get output.address acc of
-                                        Nothing ->
-                                            Dict.Any.insert output.address [ ( ref, output ) ] acc
-
-                                        Just utxos ->
-                                            Dict.Any.insert output.address (( ref, output ) :: utxos) acc
-                                )
-                            |> Maybe.withDefault acc
+                            |> Maybe.map (Tuple.pair ref)
                     )
-                    Address.emptyDict
+                |> Utxo.refDictFromList
     in
     validMinAdaPerOutput (preCreated TxContext.new).outputs
         |> Result.mapError NotEnoughMinAda
@@ -1940,13 +1931,6 @@ computeCoinSelection :
     -> Result TxFinalizationError (Address.Dict { selectedUtxos : List ( OutputReference, Output ), changeOutputs : List Output })
 computeCoinSelection localStateUtxos fee processedIntents coinSelectionAlgo =
     let
-        -- Inputs not available for selection because already manually preselected
-        -- Available inputs are the ones which are not ... unavailable! (logic)
-        -- Group them per address
-        insertInUtxoListDict ref output =
-            Dict.Any.update output.address
-                (Just << (::) ( ref, output ) << Maybe.withDefault [])
-
         -- Add the fee to free inputs
         addFee : Address -> Natural -> Address.Dict Value -> Address.Dict Value
         addFee addr amount dict =
@@ -1990,25 +1974,34 @@ computeCoinSelection localStateUtxos fee processedIntents coinSelectionAlgo =
                 dummyOutput =
                     Output (Byron Bytes.empty) Value.zero Nothing Nothing
 
+                -- Inputs not available for selection because already manually preselected
+                -- or in guaranteedUtxos.
                 notAvailableUtxos =
-                    -- Using dummyOutput to have the same type as localStateUtxos
-                    Dict.Any.map (\_ _ -> dummyOutput) processedIntents.preSelected.inputs
+                    Dict.Any.union processedIntents.guaranteedUtxos <|
+                        -- Using dummyOutput to have the same type as localStateUtxos
+                        Dict.Any.map (\_ _ -> dummyOutput) processedIntents.preSelected.inputs
 
+                -- Available inputs are the ones which are not ... unavailable! (logic)
+                -- Group them per address
                 availableUtxos : Address.Dict (List ( OutputReference, Output ))
                 availableUtxos =
                     Dict.Any.diff localStateUtxos notAvailableUtxos
-                        --> Utxo.RefDict Output
                         |> Dict.Any.foldl insertInUtxoListDict Address.emptyDict
 
-                relatedFreeOutputValues : Address.Dict Value
-                relatedFreeOutputValues =
-                    Dict.Any.diff processedIntents.freeOutputs independentFreeOutputValues
+                insertInUtxoListDict ref output =
+                    Dict.Any.update output.address
+                        (Just << (::) ( ref, output ) << Maybe.withDefault [])
+
+                guarantedUtxosPerAddress : Address.Dict (List ( OutputReference, Output ))
+                guarantedUtxosPerAddress =
+                    processedIntents.guaranteedUtxos
+                        |> Dict.Any.foldl insertInUtxoListDict Address.emptyDict
 
                 context addr targetValue alreadyOwed =
                     { targetValue = targetValue
                     , alreadyOwed = alreadyOwed
                     , availableUtxos = Dict.Any.get addr availableUtxos |> Maybe.withDefault []
-                    , alreadySelectedUtxos = []
+                    , alreadySelectedUtxos = Dict.Any.get addr guarantedUtxosPerAddress |> Maybe.withDefault []
                     }
 
                 whenInput addr v =
@@ -2019,6 +2012,10 @@ computeCoinSelection localStateUtxos fee processedIntents coinSelectionAlgo =
 
                 whenBoth addr input output =
                     Dict.Any.insert addr (context addr input output)
+
+                relatedFreeOutputValues : Address.Dict Value
+                relatedFreeOutputValues =
+                    Dict.Any.diff processedIntents.freeOutputs independentFreeOutputValues
             in
             Dict.Any.merge
                 whenInput
