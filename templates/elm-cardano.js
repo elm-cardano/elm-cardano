@@ -107,14 +107,16 @@ function initElmCardano({
     }
   }
 
-  async function handleWalletApiRequest({ id, api, method, args }) {
+  async function handleWalletApiRequest({ id, api, extension, method, args }) {
     if (id in window.cardano) {
       // Replace "null" by "undefined" in the args array
       const correctArgs = args.map((item) => (item === null ? undefined : item));
+      const api = extension != 30 ? api["cip"+extension] : api;
       const response = await api[method](...correctArgs);
       return {
         responseType: "cip30-api",
         walletId: id,
+        extension,
         method,
         response,
       };

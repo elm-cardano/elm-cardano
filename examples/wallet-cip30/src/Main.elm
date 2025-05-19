@@ -93,11 +93,17 @@ init _ =
 -- UPDATE
 
 
+walletResponseDecoder : JDecode.Decoder (Cip30.Response Cip30.ApiResponse)
+walletResponseDecoder =
+    Cip30.responseDecoder <|
+        Dict.singleton 30 Cip30.apiDecoder
+
+
 update : Msg -> Model -> ( Model, Cmd Msg )
 update msg model =
     case msg of
         WalletMsg value ->
-            case JDecode.decodeValue Cip30.responseDecoder value of
+            case JDecode.decodeValue walletResponseDecoder value of
                 Ok (Cip30.AvailableWallets wallets) ->
                     ( { model | availableWallets = wallets, lastError = "" }
                     , Cmd.none
@@ -235,6 +241,9 @@ update msg model =
                       }
                     , Cmd.none
                     )
+
+                Ok (Cip30.ApiResponse _ (Cip30.UnhandledApiResponse error)) ->
+                    ( { model | lastError = Debug.toString error }, Cmd.none )
 
                 Ok (Cip30.ApiError error) ->
                     ( { model | lastError = Debug.toString error }, Cmd.none )
