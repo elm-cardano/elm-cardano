@@ -111,8 +111,8 @@ function initElmCardano({
     if (id in window.cardano) {
       // Replace "null" by "undefined" in the args array
       const correctArgs = args.map((item) => (item === null ? undefined : item));
-      const api = extension != 30 ? api["cip"+extension] : api;
-      const response = await api[method](...correctArgs);
+      const apiWithExtension = extension != 30 ? api["cip"+extension] : api;
+      const response = await apiWithExtension[method](...correctArgs);
       return {
         responseType: "cip30-api",
         walletId: id,

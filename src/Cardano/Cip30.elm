@@ -4,8 +4,9 @@ module Cardano.Cip30 exposing
     , discoverWallets, enableWallet
     , getExtensions, getNetworkId, getUtxos, getCollateral, getBalance
     , getUsedAddresses, getUnusedAddresses, getChangeAddress, getRewardAddresses
-    , signTx, signTxCbor, signData, submitTx, submitTxCbor
-    , Response(..), ApiResponse(..), Utxo, DataSignature, responseDecoder, apiDecoder, utxoDecoder, hexCborDecoder, addressDecoder
+    , signTx, signTxCbor, KeyType(..), signData, submitTx, submitTxCbor
+    , apiRequest
+    , Response(..), ApiResponse(..), Utxo, DataSignature, responseDecoder, apiDecoder, utxoDecoder, hexCborDecoder, addressDecoder, dataSignatureDecoder
     )
 
 {-| CIP 30 support.
@@ -20,14 +21,16 @@ module Cardano.Cip30 exposing
 
 @docs getUsedAddresses, getUnusedAddresses, getChangeAddress, getRewardAddresses
 
-@docs signTx, signTxCbor, signData, submitTx, submitTxCbor
+@docs signTx, signTxCbor, KeyType, signData, submitTx, submitTxCbor
 
-@docs Response, ApiResponse, Utxo, DataSignature, responseDecoder, apiDecoder, utxoDecoder, hexCborDecoder, addressDecoder
+@docs apiRequest
+
+@docs Response, ApiResponse, Utxo, DataSignature, responseDecoder, apiDecoder, utxoDecoder, hexCborDecoder, addressDecoder, dataSignatureDecoder
 
 -}
 
 import Bytes.Comparable as Bytes exposing (Bytes)
-import Cardano.Address as Address exposing (Address, NetworkId)
+import Cardano.Address as Address exposing (Address, CredentialHash, NetworkId, StakeAddress)
 import Cardano.Transaction as Transaction exposing (Transaction, VKeyWitness)
 import Cardano.Utxo as Utxo exposing (TransactionId)
 import Cardano.Value as CValue
@@ -223,11 +226,31 @@ signTxCbor wallet { partialSign } txBytes =
     apiRequest wallet Nothing "signTx" [ JEncode.string (Bytes.toHex txBytes), JEncode.bool partialSign ]
 
 
-{-| Sign an arbitrary payload with your stake key.
+{-| Key type used for data signature.
 -}
-signData : Wallet -> { addr : String, payload : Bytes a } -> Request
-signData wallet { addr, payload } =
-    apiRequest wallet Nothing "signData" [ JEncode.string addr, JEncode.string <| Bytes.toHex payload ]
+type KeyType
+    = PaymentKey
+    | StakeKey
+
+
+{-| Sign an arbitrary payload with your wallet keys.
+You can provide one of your payment or stake credential handled by the wallet.
+-}
+signData : Wallet -> { networkId : NetworkId, keyType : KeyType, keyHash : Bytes CredentialHash, payload : Bytes a } -> Request
+signData wallet { networkId, keyType, keyHash, payload } =
+    let
+        addrString =
+            case keyType of
+                PaymentKey ->
+                    Address.enterprise networkId keyHash
+                        |> Address.toBech32
+
+                StakeKey ->
+                    StakeAddress networkId (Address.VKeyHash keyHash)
+                        |> Address.stakeAddressToBytes
+                        |> Bytes.toHex
+    in
+    apiRequest wallet Nothing "signData" [ JEncode.string addrString, JEncode.string <| Bytes.toHex payload ]
 
 
 {-| Encode a transaction and submit it via the wallet.
@@ -259,6 +282,11 @@ encodePaginate { page, limit } =
     JEncode.object [ ( "page", JEncode.int page ), ( "limit", JEncode.int limit ) ]
 
 
+{-| Make a CIP-30 API request.
+
+This is mainly a helper function, exposed for implementors of extensions, like CIP-95.
+
+-}
 apiRequest : Wallet -> Maybe Int -> String -> List Value -> Request
 apiRequest (Wallet { descriptor, api }) extension method args =
     ApiRequest
@@ -538,6 +566,8 @@ addressDecoder =
             )
 
 
+{-| Helper function to decode data signatures.
+-}
 dataSignatureDecoder : Decoder DataSignature
 dataSignatureDecoder =
     JDecode.map2 DataSignature
