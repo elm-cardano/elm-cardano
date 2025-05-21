@@ -96,8 +96,7 @@ function initElmCardano({
     const extensions = extensionsIds.map((cipId) => ({ cip: cipId }));
     if (walletId in window.cardano) {
       const walletHandle = window.cardano[walletId];
-      // const api = await walletHandle.enable({extensions}) // Eternl incorrect handle of CIP30 enable
-      const api = await walletHandle.enable(extensions); // Eternl incorrect handle of CIP30 enable
+      const api = await walletHandle.enable({ extensions })
       const descriptor = await walletDescriptor(walletId);
       return { descriptor, api, walletHandle };
     } else {
@@ -107,14 +106,16 @@ function initElmCardano({
     }
   }
 
-  async function handleWalletApiRequest({ id, api, method, args }) {
+  async function handleWalletApiRequest({ id, api, extension, method, args }) {
     if (id in window.cardano) {
       // Replace "null" by "undefined" in the args array
       const correctArgs = args.map((item) => (item === null ? undefined : item));
-      const response = await api[method](...correctArgs);
+      const apiWithExtension = extension != 30 ? api["cip"+extension] : api;
+      const response = await apiWithExtension[method](...correctArgs);
       return {
         responseType: "cip30-api",
         walletId: id,
+        extension,
         method,
         response,
       };

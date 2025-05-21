@@ -14,6 +14,7 @@ import Cardano.Uplc as Uplc
 import Cardano.Utxo as Utxo exposing (DatumOption(..), Output, OutputReference, TransactionId)
 import Cardano.Value
 import Cardano.Witness as Witness
+import Dict
 import Dict.Any
 import Html exposing (Html, button, div, text)
 import Html.Attributes exposing (height, src)
@@ -141,6 +142,12 @@ type Msg
     | UnregisterDRepButtonClicked
 
 
+walletResponseDecoder : Decoder (Cip30.Response Cip30.ApiResponse)
+walletResponseDecoder =
+    Cip30.responseDecoder <|
+        Dict.singleton 30 Cip30.apiDecoder
+
+
 type alias ProtocolParams =
     { costModels : CostModels
     , drepDeposit : Natural
@@ -151,7 +158,7 @@ update : Msg -> Model -> ( Model, Cmd Msg )
 update msg model =
     case ( msg, model ) of
         ( WalletMsg value, _ ) ->
-            case ( JD.decodeValue Cip30.responseDecoder value, model ) of
+            case ( JD.decodeValue walletResponseDecoder value, model ) of
                 -- We just discovered available wallets
                 ( Ok (Cip30.AvailableWallets wallets), Startup ) ->
                     ( WalletDiscovered wallets, Cmd.none )
