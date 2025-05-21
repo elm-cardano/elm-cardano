@@ -12,7 +12,7 @@ module Cardano.Cip95 exposing
 -}
 
 import Bytes.Comparable as Bytes exposing (Bytes)
-import Cardano.Address as Address exposing (CredentialHash, NetworkId)
+import Cardano.Address exposing (CredentialHash)
 import Cardano.Cip30 as Cip30
 import Cardano.Transaction exposing (Ed25519PublicKey)
 import Json.Decode as JDecode exposing (Decoder)
