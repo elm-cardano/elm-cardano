@@ -96,8 +96,7 @@ function initElmCardano({
     const extensions = extensionsIds.map((cipId) => ({ cip: cipId }));
     if (walletId in window.cardano) {
       const walletHandle = window.cardano[walletId];
-      // const api = await walletHandle.enable({extensions}) // Eternl incorrect handle of CIP30 enable
-      const api = await walletHandle.enable(extensions); // Eternl incorrect handle of CIP30 enable
+      const api = await walletHandle.enable({ extensions })
       const descriptor = await walletDescriptor(walletId);
       return { descriptor, api, walletHandle };
     } else {
