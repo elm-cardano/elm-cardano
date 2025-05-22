@@ -3,7 +3,7 @@ port module Main exposing (..)
 import Browser
 import Bytes.Comparable as Bytes exposing (Bytes)
 import Bytes.Encode
-import Cardano.Address as Address exposing (Address, CredentialHash, NetworkId)
+import Cardano.Address as Address exposing (CredentialHash)
 import Cardano.Cip30 as Cip30
 import Cardano.Cip95 as Cip95
 import Cardano.Transaction exposing (Transaction)
@@ -66,7 +66,6 @@ type alias Model =
     { availableWallets : List Cip30.WalletDescriptor
     , connectedWallets : Dict String Cip30.Wallet
     , utxos : List Cip30.Utxo
-    , changeAddress : Maybe { walletId : String, address : Address }
     , drepKeyHash : Maybe { walletId : String, drepId : Bytes CredentialHash }
     , signedTx : TxSign
     , lastApiResponse : String
@@ -85,7 +84,6 @@ init _ =
     ( { availableWallets = []
       , connectedWallets = Dict.empty
       , utxos = []
-      , changeAddress = Nothing
       , drepKeyHash = Nothing
       , signedTx = NoSignRequest
       , lastApiResponse = ""
@@ -199,8 +197,12 @@ update msg model =
 
                 Ok (Cip30.ApiResponse { walletId } (Cip30ApiResponse (Cip30.ChangeAddress changeAddress))) ->
                     ( { model
-                        | lastApiResponse = "wallet: " ++ walletId ++ ", change address:\n" ++ Debug.toString changeAddress
-                        , changeAddress = Just { walletId = walletId, address = changeAddress }
+                        | lastApiResponse = "wallet: " ++ walletId ++ ", change address:\n" ++ Address.toBech32 changeAddress
+                        , connectedWallets = Dict.update walletId (Maybe.map (Cip30.updateChangeAddress changeAddress)) model.connectedWallets
+
+                        -- Reset the wallet info
+                        , utxos = []
+                        , drepKeyHash = Nothing
                         , lastError = ""
                       }
                     , Cmd.none
@@ -294,8 +296,28 @@ update msg model =
                 Ok (Cip30.ApiResponse _ (Cip95ApiResponse (Cip95.UnhandledApiResponse error))) ->
                     ( { model | lastError = Debug.toString error }, Cmd.none )
 
-                Ok (Cip30.ApiError error) ->
-                    ( { model | lastError = Debug.toString error }, Cmd.none )
+                Ok (Cip30.ApiError ({ walletId, code } as error)) ->
+                    if code == -4 then
+                        -- Code error -4 happens when the wallet account changed.
+                        -- Let’s reconnect if that wallet was connected.
+                        case walletId of
+                            Just id ->
+                                case Dict.get id model.connectedWallets of
+                                    Just wallet ->
+                                        let
+                                            extensions =
+                                                (Cip30.walletDescriptor wallet).supportedExtensions
+                                        in
+                                        ( model, toWallet (Cip30.encodeRequest (Cip30.enableWallet { id = id, extensions = extensions, watchInterval = Just 2 })) )
+
+                                    Nothing ->
+                                        ( { model | lastError = "Wallet disconnected but is not listed in connected wallet ??? " ++ id }, Cmd.none )
+
+                            _ ->
+                                ( { model | lastError = Debug.toString error }, Cmd.none )
+
+                    else
+                        ( { model | lastError = Debug.toString error }, Cmd.none )
 
                 Ok (Cip30.UnhandledResponseType error) ->
                     ( { model | lastError = error }, Cmd.none )
@@ -307,7 +329,7 @@ update msg model =
             ( model, toWallet <| Cip30.encodeRequest Cip30.discoverWallets )
 
         ConnectButtonClicked { id, extensions } ->
-            ( model, toWallet (Cip30.encodeRequest (Cip30.enableWallet { id = id, extensions = extensions })) )
+            ( model, toWallet (Cip30.encodeRequest (Cip30.enableWallet { id = id, extensions = extensions, watchInterval = Just 2 })) )
 
         GetExtensionsButtonClicked wallet ->
             ( model, toWallet (Cip30.encodeRequest (Cip30.getExtensions wallet)) )
@@ -343,20 +365,17 @@ update msg model =
             ( model, toWallet (Cip30.encodeRequest (Cip30.getRewardAddresses wallet)) )
 
         SignTxButtonClicked wallet ->
-            case ( model.utxos, model.changeAddress ) of
-                ( [], _ ) ->
+            case model.utxos of
+                [] ->
                     ( { model | lastError = "You need to click the 'getUtxos' button first to be aware of some existing utxos" }, Cmd.none )
 
-                ( _, Nothing ) ->
-                    ( { model | lastError = "You need to click the 'getChangeAddress' button first to know the wallet address" }, Cmd.none )
-
-                ( utxos, Just { address } ) ->
+                utxos ->
                     let
                         localStateUtxos =
                             Utxo.refDictFromList utxos
 
                         txIntents =
-                            [ SendTo address CValue.zero ]
+                            [ SendTo (Cip30.walletChangeAddress wallet) CValue.zero ]
                     in
                     case TxIntent.finalize localStateUtxos [] txIntents of
                         Ok { tx } ->
@@ -376,66 +395,48 @@ update msg model =
                     ( { model | lastError = "You need to click the 'signTx' button first to sign a Tx before submitting it" }, Cmd.none )
 
         SignDataPaymentKeyButtonClicked wallet ->
-            case model.changeAddress of
-                Nothing ->
-                    ( { model | lastApiResponse = "Click on getChangeAddress for this wallet first." }, Cmd.none )
+            case Cip30.walletChangeAddress wallet of
+                Address.Shelley { networkId, paymentCredential } ->
+                    case paymentCredential of
+                        Address.ScriptHash _ ->
+                            ( { model | lastApiResponse = "Your change address is a script, not a public key." }, Cmd.none )
 
-                Just { walletId, address } ->
-                    if walletId /= (Cip30.walletDescriptor wallet).id then
-                        ( { model | lastApiResponse = "Click on getChangeAddress for this wallet first." }, Cmd.none )
+                        Address.VKeyHash keyHash ->
+                            ( model
+                            , toWallet <|
+                                Cip30.encodeRequest <|
+                                    Cip30.signData wallet
+                                        { networkId = networkId
+                                        , keyType = Cip30.PaymentKey
+                                        , keyHash = keyHash
+                                        , payload = Bytes.fromBytes <| Bytes.Encode.encode (Bytes.Encode.unsignedInt8 42)
+                                        }
+                            )
 
-                    else
-                        case address of
-                            Address.Shelley { networkId, paymentCredential } ->
-                                case paymentCredential of
-                                    Address.ScriptHash _ ->
-                                        ( { model | lastApiResponse = "Your change address is a script, not a public key." }, Cmd.none )
-
-                                    Address.VKeyHash keyHash ->
-                                        ( model
-                                        , toWallet <|
-                                            Cip30.encodeRequest <|
-                                                Cip30.signData wallet
-                                                    { networkId = networkId
-                                                    , keyType = Cip30.PaymentKey
-                                                    , keyHash = keyHash
-                                                    , payload = Bytes.fromBytes <| Bytes.Encode.encode (Bytes.Encode.unsignedInt8 42)
-                                                    }
-                                        )
-
-                            _ ->
-                                ( { model | lastApiResponse = "Your change address is not a Shelley address!?" }, Cmd.none )
+                _ ->
+                    ( { model | lastApiResponse = "Your change address is not a Shelley address!?" }, Cmd.none )
 
         SignDataStakeKeyButtonClicked wallet ->
-            case model.changeAddress of
-                Nothing ->
-                    ( { model | lastApiResponse = "Click on getChangeAddress for this wallet first." }, Cmd.none )
+            case Cip30.walletChangeAddress wallet of
+                Address.Shelley { networkId, stakeCredential } ->
+                    case stakeCredential of
+                        Just (Address.InlineCredential (Address.VKeyHash keyHash)) ->
+                            ( model
+                            , toWallet <|
+                                Cip30.encodeRequest <|
+                                    Cip30.signData wallet
+                                        { networkId = networkId
+                                        , keyType = Cip30.StakeKey
+                                        , keyHash = keyHash
+                                        , payload = Bytes.fromBytes <| Bytes.Encode.encode (Bytes.Encode.unsignedInt8 42)
+                                        }
+                            )
 
-                Just { walletId, address } ->
-                    if walletId /= (Cip30.walletDescriptor wallet).id then
-                        ( { model | lastApiResponse = "Click on getChangeAddress for this wallet first." }, Cmd.none )
+                        _ ->
+                            ( { model | lastApiResponse = "Stake credential is absent or not a public key." }, Cmd.none )
 
-                    else
-                        case address of
-                            Address.Shelley { networkId, stakeCredential } ->
-                                case stakeCredential of
-                                    Just (Address.InlineCredential (Address.VKeyHash keyHash)) ->
-                                        ( model
-                                        , toWallet <|
-                                            Cip30.encodeRequest <|
-                                                Cip30.signData wallet
-                                                    { networkId = networkId
-                                                    , keyType = Cip30.StakeKey
-                                                    , keyHash = keyHash
-                                                    , payload = Bytes.fromBytes <| Bytes.Encode.encode (Bytes.Encode.unsignedInt8 42)
-                                                    }
-                                        )
-
-                                    _ ->
-                                        ( { model | lastApiResponse = "Stake credential is absent or not a public key." }, Cmd.none )
-
-                            _ ->
-                                ( { model | lastApiResponse = "Your change address is not a Shelley address!?" }, Cmd.none )
+                _ ->
+                    ( { model | lastApiResponse = "Your change address is not a Shelley address!?" }, Cmd.none )
 
         GetDrepKeyButtonClicked wallet ->
             ( model, toWallet (Cip30.encodeRequest (Cip95.getPubDRepKey wallet)) )
@@ -535,7 +536,7 @@ viewAvailableWallets wallets =
 
         enableButton : Cip30.WalletDescriptor -> Html Msg
         enableButton { id, supportedExtensions } =
-            Html.button [ onClick (ConnectButtonClicked { id = id, extensions = supportedExtensions }) ] [ text "connect" ]
+            Html.button [ onClick (ConnectButtonClicked { id = id, extensions = supportedExtensions }) ] [ text "connect (watch changeAddress with 2s interval)" ]
     in
     wallets
         |> List.map (\w -> div [] [ walletIcon w, text (walletDescription w), enableButton w ])
@@ -546,11 +547,16 @@ viewConnectedWallets : Dict String Cip30.Wallet -> Html Msg
 viewConnectedWallets wallets =
     let
         walletDescription : Cip30.WalletDescriptor -> String
-        walletDescription w =
-            "id: "
-                ++ w.id
+        walletDescription descriptor =
+            " id: "
+                ++ descriptor.id
                 ++ ", name: "
-                ++ w.name
+                ++ descriptor.name
+
+        changeAddress : Cip30.Wallet -> String
+        changeAddress wallet =
+            Cip30.walletChangeAddress wallet
+                |> Address.toBech32
 
         walletIcon : Cip30.WalletDescriptor -> Html Msg
         walletIcon { icon } =
@@ -563,6 +569,7 @@ viewConnectedWallets wallets =
                 div []
                     (walletIcon d
                         :: text (walletDescription d)
+                        :: text (", change address: " ++ changeAddress w ++ " ")
                         :: walletActionsCip30 w
                         ++ walletActionsCip95 d.supportedExtensions w
                     )

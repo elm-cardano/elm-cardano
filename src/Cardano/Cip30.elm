@@ -1,5 +1,5 @@
 module Cardano.Cip30 exposing
-    ( WalletDescriptor, Wallet, walletDescriptor
+    ( WalletDescriptor, Wallet, walletDescriptor, walletChangeAddress, updateChangeAddress
     , Request, encodeRequest, Paginate
     , discoverWallets, enableWallet
     , getExtensions, getNetworkId, getUtxos, getCollateral, getBalance
@@ -11,7 +11,7 @@ module Cardano.Cip30 exposing
 
 {-| CIP 30 support.
 
-@docs WalletDescriptor, Wallet, walletDescriptor
+@docs WalletDescriptor, Wallet, walletDescriptor, walletChangeAddress, updateChangeAddress
 
 @docs Request, encodeRequest, Paginate
 
@@ -62,6 +62,7 @@ type alias WalletDescriptor =
 type Wallet
     = Wallet
         { descriptor : WalletDescriptor
+        , changeAddress : Address
         , api : Value
         , walletHandle : Value
         }
@@ -74,11 +75,25 @@ walletDescriptor (Wallet { descriptor }) =
     descriptor
 
 
+{-| Retrieve the change address associated with a [Wallet] object.
+-}
+walletChangeAddress : Wallet -> Address
+walletChangeAddress (Wallet { changeAddress }) =
+    changeAddress
+
+
+{-| Update the change address associated with a [Wallet] object.
+-}
+updateChangeAddress : Address -> Wallet -> Wallet
+updateChangeAddress changeAddress (Wallet wallet) =
+    Wallet { wallet | changeAddress = changeAddress }
+
+
 {-| Opaque type for requests to be sent to the wallets.
 -}
 type Request
     = DiscoverWallets
-    | Enable { id : String, extensions : List Int }
+    | Enable { id : String, extensions : List Int, watchInterval : Maybe Int }
     | ApiRequest
         { id : String
         , api : Value
@@ -104,10 +119,13 @@ discoverWallets =
 Will typically be followed by a response of the [EnabledWallet] variant
 containing a [Wallet] to be stored in your model.
 
+Optionally, you can watch for changes of the selected wallet at a regular interval (in seconds).
+Each time, the wallet will check the current change address and notify with a `ChangeAddress` API response if it has changed.
+
 -}
-enableWallet : { id : String, extensions : List Int } -> Request
-enableWallet idAndExtensions =
-    Enable idAndExtensions
+enableWallet : { id : String, extensions : List Int, watchInterval : Maybe Int } -> Request
+enableWallet parameters =
+    Enable parameters
 
 
 {-| Get the list of extensions enabled by the wallet.
@@ -307,11 +325,12 @@ encodeRequest request =
             JEncode.object
                 [ ( "requestType", JEncode.string "cip30-discover" ) ]
 
-        Enable { id, extensions } ->
+        Enable { id, extensions, watchInterval } ->
             JEncode.object
                 [ ( "requestType", JEncode.string "cip30-enable" )
                 , ( "id", JEncode.string id )
                 , ( "extensions", JEncode.list JEncode.int extensions )
+                , ( "watchInterval", Maybe.map JEncode.int watchInterval |> Maybe.withDefault JEncode.null )
                 ]
 
         ApiRequest { id, api, extension, method, args } ->
@@ -331,7 +350,7 @@ type Response apiResponse
     = AvailableWallets (List WalletDescriptor)
     | EnabledWallet Wallet
     | ApiResponse { walletId : String } apiResponse
-    | ApiError { code : Int, info : String }
+    | ApiError { walletId : Maybe String, code : Int, info : String }
     | UnhandledResponseType String
 
 
@@ -398,8 +417,9 @@ responseDecoder apiDecoders =
                                 )
 
                     "cip30-error" ->
-                        JDecode.field "error" errorDecoder
-                            |> JDecode.map ApiError
+                        JDecode.map2 (\walletId error -> ApiError { walletId = walletId, code = error.code, info = error.info })
+                            (JDecode.field "walletId" <| JDecode.maybe JDecode.string)
+                            (JDecode.field "error" errorDecoder)
 
                     _ ->
                         JDecode.succeed (UnhandledResponseType responseType)
@@ -449,16 +469,18 @@ descriptorDecoder =
 enableDecoder : Decoder (Response a)
 enableDecoder =
     JDecode.map EnabledWallet <|
-        JDecode.map3
+        JDecode.map4
             -- Explicit constructor to avoid messing with fields order
-            (\descriptor api walletHandle ->
+            (\descriptor changeAddress api walletHandle ->
                 Wallet
                     { descriptor = descriptor
+                    , changeAddress = changeAddress
                     , api = api
                     , walletHandle = walletHandle
                     }
             )
             (JDecode.field "descriptor" descriptorDecoder)
+            (JDecode.field "changeAddress" addressDecoder)
             (JDecode.field "api" JDecode.value)
             (JDecode.field "walletHandle" JDecode.value)
 

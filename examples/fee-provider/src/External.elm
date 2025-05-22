@@ -209,7 +209,7 @@ update msg model =
                     ( model, Cmd.none )
 
         ( ConnectButtonClicked { id }, WalletDiscovered _ ) ->
-            ( model, toExternalWallet (Cip30.encodeRequest (Cip30.enableWallet { id = id, extensions = [] })) )
+            ( model, toExternalWallet (Cip30.encodeRequest (Cip30.enableWallet { id = id, extensions = [], watchInterval = Nothing })) )
 
         _ ->
             ( model, Cmd.none )
