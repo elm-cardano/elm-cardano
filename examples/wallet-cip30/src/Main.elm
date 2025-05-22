@@ -65,7 +65,7 @@ type Msg
 type alias Model =
     { availableWallets : List Cip30.WalletDescriptor
     , connectedWallets : Dict String Cip30.Wallet
-    , utxos : List Cip30.Utxo
+    , utxos : Maybe { walletId : String, utxos : List Cip30.Utxo }
     , drepKeyHash : Maybe { walletId : String, drepId : Bytes CredentialHash }
     , signedTx : TxSign
     , lastApiResponse : String
@@ -83,7 +83,7 @@ init : () -> ( Model, Cmd Msg )
 init _ =
     ( { availableWallets = []
       , connectedWallets = Dict.empty
-      , utxos = []
+      , utxos = Nothing
       , drepKeyHash = Nothing
       , signedTx = NoSignRequest
       , lastApiResponse = ""
@@ -142,17 +142,15 @@ update msg model =
                     , Cmd.none
                     )
 
-                Ok (Cip30.ApiResponse { walletId } (Cip30ApiResponse (Cip30.WalletUtxos utxosList))) ->
+                Ok (Cip30.ApiResponse { walletId } (Cip30ApiResponse (Cip30.WalletUtxos utxos))) ->
                     let
-                        ( utxos, utxosStr ) =
-                            ( utxosList
-                            , List.map Debug.toString utxosList
+                        utxosStr =
+                            List.map Debug.toString utxos
                                 |> String.join "\n"
-                            )
                     in
                     ( { model
                         | lastApiResponse = "wallet: " ++ walletId ++ ", utxos:\n" ++ utxosStr
-                        , utxos = utxos
+                        , utxos = Just { walletId = walletId, utxos = utxos }
                         , lastError = ""
                       }
                     , Cmd.none
@@ -199,10 +197,6 @@ update msg model =
                     ( { model
                         | lastApiResponse = "wallet: " ++ walletId ++ ", change address:\n" ++ Address.toBech32 changeAddress
                         , connectedWallets = Dict.update walletId (Maybe.map (Cip30.updateChangeAddress changeAddress)) model.connectedWallets
-
-                        -- Reset the wallet info
-                        , utxos = []
-                        , drepKeyHash = Nothing
                         , lastError = ""
                       }
                     , Cmd.none
@@ -296,28 +290,8 @@ update msg model =
                 Ok (Cip30.ApiResponse _ (Cip95ApiResponse (Cip95.UnhandledApiResponse error))) ->
                     ( { model | lastError = Debug.toString error }, Cmd.none )
 
-                Ok (Cip30.ApiError ({ walletId, code } as error)) ->
-                    if code == -4 then
-                        -- Code error -4 happens when the wallet account changed.
-                        -- Let’s reconnect if that wallet was connected.
-                        case walletId of
-                            Just id ->
-                                case Dict.get id model.connectedWallets of
-                                    Just wallet ->
-                                        let
-                                            extensions =
-                                                (Cip30.walletDescriptor wallet).supportedExtensions
-                                        in
-                                        ( model, toWallet (Cip30.encodeRequest (Cip30.enableWallet { id = id, extensions = extensions, watchInterval = Just 2 })) )
-
-                                    Nothing ->
-                                        ( { model | lastError = "Wallet disconnected but is not listed in connected wallet ??? " ++ id }, Cmd.none )
-
-                            _ ->
-                                ( { model | lastError = Debug.toString error }, Cmd.none )
-
-                    else
-                        ( { model | lastError = Debug.toString error }, Cmd.none )
+                Ok (Cip30.ApiError error) ->
+                    ( { model | lastError = Debug.toString error }, Cmd.none )
 
                 Ok (Cip30.UnhandledResponseType error) ->
                     ( { model | lastError = error }, Cmd.none )
@@ -366,25 +340,29 @@ update msg model =
 
         SignTxButtonClicked wallet ->
             case model.utxos of
-                [] ->
+                Nothing ->
                     ( { model | lastError = "You need to click the 'getUtxos' button first to be aware of some existing utxos" }, Cmd.none )
 
-                utxos ->
-                    let
-                        localStateUtxos =
-                            Utxo.refDictFromList utxos
+                Just { walletId, utxos } ->
+                    if walletId /= (Cip30.walletDescriptor wallet).id then
+                        ( { model | lastApiResponse = "Click on getUtxos for this wallet first." }, Cmd.none )
 
-                        txIntents =
-                            [ SendTo (Cip30.walletChangeAddress wallet) CValue.zero ]
-                    in
-                    case TxIntent.finalize localStateUtxos [] txIntents of
-                        Ok { tx } ->
-                            ( { model | signedTx = WaitingSign tx }
-                            , toWallet (Cip30.encodeRequest (Cip30.signTx wallet { partialSign = False } tx))
-                            )
+                    else
+                        let
+                            localStateUtxos =
+                                Utxo.refDictFromList utxos
 
-                        Err txBuildingError ->
-                            ( { model | lastError = TxIntent.errorToString txBuildingError }, Cmd.none )
+                            txIntents =
+                                [ SendTo (Cip30.walletChangeAddress wallet) CValue.zero ]
+                        in
+                        case TxIntent.finalize localStateUtxos [] txIntents of
+                            Ok { tx } ->
+                                ( { model | signedTx = WaitingSign tx }
+                                , toWallet (Cip30.encodeRequest (Cip30.signTx wallet { partialSign = False } tx))
+                                )
+
+                            Err txBuildingError ->
+                                ( { model | lastError = TxIntent.errorToString txBuildingError }, Cmd.none )
 
         SubmitTxButtonClicked wallet ->
             case model.signedTx of
@@ -489,6 +467,8 @@ addEnabledWallet wallet ({ availableWallets, connectedWallets } as model) =
     { model
         | availableWallets = updatedAvailableWallets
         , connectedWallets = Dict.insert id wallet connectedWallets
+        , utxos = Nothing
+        , drepKeyHash = Nothing
         , lastApiResponse = ""
         , lastError = ""
     }
