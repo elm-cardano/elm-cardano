@@ -8,6 +8,7 @@ import Cardano.Script exposing (PlutusVersion(..))
 import Cardano.Transaction as Tx exposing (Transaction)
 import Cardano.Utxo as Utxo exposing (DatumOption(..), Output)
 import Cbor.Encode
+import Dict
 import Dict.Any
 import Hex.Convert
 import Html exposing (Html, div, text)
@@ -119,11 +120,17 @@ mainAppMsgDecoder =
             )
 
 
+walletResponseDecoder : Decoder (Cip30.Response Cip30.ApiResponse)
+walletResponseDecoder =
+    Cip30.responseDecoder <|
+        Dict.singleton 30 Cip30.apiDecoder
+
+
 update : Msg -> Model -> ( Model, Cmd Msg )
 update msg model =
     case ( msg, model ) of
         ( WalletMsg value, _ ) ->
-            case ( JD.decodeValue Cip30.responseDecoder value, model ) of
+            case ( JD.decodeValue walletResponseDecoder value, model ) of
                 -- We just discovered available wallets
                 ( Ok (Cip30.AvailableWallets wallets), Startup ) ->
                     ( WalletDiscovered wallets, Cmd.none )
@@ -202,7 +209,7 @@ update msg model =
                     ( model, Cmd.none )
 
         ( ConnectButtonClicked { id }, WalletDiscovered _ ) ->
-            ( model, toExternalWallet (Cip30.encodeRequest (Cip30.enableWallet { id = id, extensions = [] })) )
+            ( model, toExternalWallet (Cip30.encodeRequest (Cip30.enableWallet { id = id, extensions = [], watchInterval = Nothing })) )
 
         _ ->
             ( model, Cmd.none )

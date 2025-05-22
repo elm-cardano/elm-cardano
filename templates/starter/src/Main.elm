@@ -1,11 +1,12 @@
 port module Main exposing (..)
 
 import Browser
-import Bytes.Comparable as Bytes exposing (Bytes)
+import Bytes.Comparable as Bytes
 import Cardano.Address as Address exposing (Address)
 import Cardano.Cip30 as Cip30
 import Cardano.Utxo exposing (Output, OutputReference)
-import Html exposing (Html, button, div, text)
+import Dict
+import Html exposing (Html, div, text)
 import Html.Attributes exposing (height, src)
 import Html.Events exposing (onClick)
 import Json.Decode as JDecode exposing (Value)
@@ -63,11 +64,17 @@ init _ =
 -- UPDATE
 
 
+walletResponseDecoder : JDecode.Decoder (Cip30.Response Cip30.ApiResponse)
+walletResponseDecoder =
+    Cip30.responseDecoder <|
+        Dict.singleton 30 Cip30.apiDecoder
+
+
 update : Msg -> Model -> ( Model, Cmd Msg )
 update msg model =
     case ( msg, model ) of
         ( WalletMsg value, _ ) ->
-            case ( JDecode.decodeValue Cip30.responseDecoder value, model ) of
+            case ( JDecode.decodeValue walletResponseDecoder value, model ) of
                 -- We just discovered available wallets
                 ( Ok (Cip30.AvailableWallets wallets), Startup ) ->
                     ( WalletDiscovered wallets, Cmd.none )
@@ -79,12 +86,12 @@ update msg model =
                     )
 
                 -- We just received the utxos, let’s ask for the main change address of the wallet
-                ( Ok (Cip30.ApiResponse { walletId } (Cip30.WalletUtxos utxos)), WalletLoading { wallet } ) ->
+                ( Ok (Cip30.ApiResponse _ (Cip30.WalletUtxos utxos)), WalletLoading { wallet } ) ->
                     ( WalletLoading { wallet = wallet, utxos = utxos }
                     , toWallet (Cip30.encodeRequest (Cip30.getChangeAddress wallet))
                     )
 
-                ( Ok (Cip30.ApiResponse { walletId } (Cip30.ChangeAddress address)), WalletLoading { wallet, utxos } ) ->
+                ( Ok (Cip30.ApiResponse _ (Cip30.ChangeAddress address)), WalletLoading { wallet, utxos } ) ->
                     ( WalletLoaded { wallet = wallet, utxos = utxos, changeAddress = address }
                     , Cmd.none
                     )
@@ -92,8 +99,8 @@ update msg model =
                 _ ->
                     ( model, Cmd.none )
 
-        ( ConnectButtonClicked { id }, WalletDiscovered descriptors ) ->
-            ( model, toWallet (Cip30.encodeRequest (Cip30.enableWallet { id = id, extensions = [] })) )
+        ( ConnectButtonClicked { id }, WalletDiscovered _ ) ->
+            ( model, toWallet (Cip30.encodeRequest (Cip30.enableWallet { id = id, extensions = [], watchInterval = Nothing })) )
 
         _ ->
             ( model, Cmd.none )

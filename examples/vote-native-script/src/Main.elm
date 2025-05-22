@@ -14,6 +14,7 @@ import Cardano.Utxo as Utxo exposing (DatumOption(..), Output, OutputReference, 
 import Cardano.Value
 import Cardano.Witness as Witness
 import Cbor.Encode
+import Dict
 import Dict.Any
 import Html exposing (Html, button, div, text)
 import Html.Attributes exposing (height, src)
@@ -243,6 +244,12 @@ type Msg
     | UnregisterDRepButtonClicked
 
 
+walletResponseDecoder : Decoder (Cip30.Response Cip30.ApiResponse)
+walletResponseDecoder =
+    Cip30.responseDecoder <|
+        Dict.singleton 30 Cip30.apiDecoder
+
+
 update : Msg -> Model -> ( Model, Cmd Msg )
 update msg model =
     case ( msg, model ) of
@@ -275,10 +282,10 @@ update msg model =
                     ( Startup { state | errors = Debug.toString err :: state.errors }, Cmd.none )
 
         ( ConnectButtonClicked { id }, _ ) ->
-            ( model, toWallet (Cip30.encodeRequest (Cip30.enableWallet { id = id, extensions = [] })) )
+            ( model, toWallet (Cip30.encodeRequest (Cip30.enableWallet { id = id, extensions = [], watchInterval = Nothing })) )
 
         ( WalletMsg value, Startup state ) ->
-            case JD.decodeValue Cip30.responseDecoder value of
+            case JD.decodeValue walletResponseDecoder value of
                 -- We just discovered available wallets
                 Ok (Cip30.AvailableWallets wallets) ->
                     ( Startup { state | walletsDiscovered = wallets }
@@ -351,7 +358,7 @@ update msg model =
 
         -- Dealing with Tx signature and submission
         ( WalletMsg value, Submitting ({ loadedWallet, feeProvider } as ctx) action { tx } ) ->
-            case JD.decodeValue Cip30.responseDecoder value of
+            case JD.decodeValue walletResponseDecoder value of
                 Ok (Cip30.ApiResponse _ (Cip30.SignedTx vkeywitnesses)) ->
                     let
                         -- Update the signatures of the Tx with the wallet response

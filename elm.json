@@ -12,6 +12,7 @@
         "Cardano.AuxiliaryData",
         "Cardano.Cip30",
         "Cardano.Cip67",
+        "Cardano.Cip95",
         "Cardano.CoinSelection",
         "Cardano.Data",
         "Cardano.Gov",

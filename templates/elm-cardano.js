@@ -16,34 +16,24 @@ function initElmCardano({
 }) {
   // Wallet CIP30 ############################################################
 
+  // Store active change address watchers
+  const walletWatchers = {};
+
   if (portFromElmToWallet) {
     portFromElmToWallet.subscribe(async (value) => {
       console.log("Received value destined to wallet:", value);
       try {
         if (value.requestType == "cip30-discover") {
-          const wallets = await concurrentHandleCip30Discover();
-          portFromWalletToElm.send({
-            responseType: "cip30-discover",
-            wallets,
-          });
+          await concurrentHandleCip30Discover();
         } else if (value.requestType == "cip30-enable") {
-          const { descriptor, api, walletHandle } = await enableCip30Wallet(
-            value.id,
-            value.extensions,
-          );
-          portFromWalletToElm.send({
-            responseType: "cip30-enable",
-            descriptor,
-            api,
-            walletHandle,
-          });
+          await enableCip30Wallet(value);
         } else if (value.requestType == "cip30-api") {
-          const apiResponse = await handleWalletApiRequest(value);
-          portFromWalletToElm.send(apiResponse);
+          await handleWalletApiRequest(value);
         }
       } catch (error) {
         portFromWalletToElm.send({
           responseType: "cip30-error",
+          walletId: value.id,
           error: error,
         });
       }
@@ -69,7 +59,10 @@ function initElmCardano({
     } else {
       console.log("Well there isn't any Cardano wallet here ^^");
     }
-    return wallets;
+    await portFromWalletToElm.send({
+      responseType: "cip30-discover",
+      wallets,
+    });
   }
 
   async function walletDescriptor(walletId) {
@@ -92,14 +85,60 @@ function initElmCardano({
     return descriptor;
   }
 
-  async function enableCip30Wallet(walletId, extensionsIds) {
-    const extensions = extensionsIds.map((cipId) => ({ cip: cipId }));
+  async function enableCip30Wallet({id, extensions, watchInterval, precomputed_descriptor=null}) {
+    const walletId = id;
+    const cipExtensions = extensions.map((cipId) => ({ cip: cipId }));
     if (walletId in window.cardano) {
       const walletHandle = window.cardano[walletId];
-      // const api = await walletHandle.enable({extensions}) // Eternl incorrect handle of CIP30 enable
-      const api = await walletHandle.enable(extensions); // Eternl incorrect handle of CIP30 enable
-      const descriptor = await walletDescriptor(walletId);
-      return { descriptor, api, walletHandle };
+      const api = await walletHandle.enable({ extensions: cipExtensions })
+      const descriptor = precomputed_descriptor ?? await walletDescriptor(walletId);
+      const changeAddress = await api.getChangeAddress();
+
+      // Unregister any watcher for walletId
+      const oldWatcher = walletWatchers[walletId];
+      if (oldWatcher && oldWatcher.intervalId) {
+        clearInterval(oldWatcher.intervalId);
+        delete walletWatchers[walletId];
+      }
+      // Register watcher for walletId
+      if (watchInterval && watchInterval > 0) {
+        walletWatchers[walletId] = { changeAddress, intervalId: undefined };
+        const watcher = walletWatchers[walletId];
+        watcher.intervalId = setInterval(async () => {
+          try {
+            const newChangeAddress = await api.getChangeAddress();
+            if (newChangeAddress != watcher.changeAddress) {
+              // Re-enable the wallet if we detect an account change
+              enableCip30Wallet({id, extensions, watchInterval, precomputed_descriptor: descriptor});
+            }
+          } catch (watchError) {
+            if (watchError.code == -4) {
+              // If this is just an account change error, re-enable the wallet
+              enableCip30Wallet({id, extensions, watchInterval, precomputed_descriptor: descriptor});
+            } else {
+              // Otherwise, stop the watcher and report the error
+              clearInterval(watcher.intervalId);
+              delete walletWatchers[walletId];
+              // Send an error message to Elm indicating the watcher failed
+              const reportedError =
+                watchError.code < 0 ? watchError : `Error watching change address for wallet ${walletId}: ${watchError.message}`;
+              portFromWalletToElm.send({
+                responseType: "cip30-error",
+                walletId,
+                error: reportedError,
+              });
+            }
+          }
+        }, 1000 * watchInterval);
+      }
+
+      await portFromWalletToElm.send({
+        responseType: "cip30-enable",
+        changeAddress,
+        descriptor,
+        api,
+        walletHandle,
+      });
     } else {
       throw new Error(
         "Wallet ID does not correspond to any installed wallet: " + walletId,
@@ -107,17 +146,19 @@ function initElmCardano({
     }
   }
 
-  async function handleWalletApiRequest({ id, api, method, args }) {
+  async function handleWalletApiRequest({ id, api, extension, method, args }) {
     if (id in window.cardano) {
       // Replace "null" by "undefined" in the args array
       const correctArgs = args.map((item) => (item === null ? undefined : item));
-      const response = await api[method](...correctArgs);
-      return {
+      const apiWithExtension = extension != 30 ? api["cip"+extension] : api;
+      const response = await apiWithExtension[method](...correctArgs);
+      await portFromWalletToElm.send({
         responseType: "cip30-api",
         walletId: id,
+        extension,
         method,
         response,
-      };
+      });
     } else {
       throw new Error(
         "Wallet ID does not correspond to any installed wallet: " + walletId,
