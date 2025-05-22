@@ -282,7 +282,7 @@ update msg model =
                     ( Startup { state | errors = Debug.toString err :: state.errors }, Cmd.none )
 
         ( ConnectButtonClicked { id }, _ ) ->
-            ( model, toWallet (Cip30.encodeRequest (Cip30.enableWallet { id = id, extensions = [] })) )
+            ( model, toWallet (Cip30.encodeRequest (Cip30.enableWallet { id = id, extensions = [], watchInterval = Nothing })) )
 
         ( WalletMsg value, Startup state ) ->
             case JD.decodeValue walletResponseDecoder value of

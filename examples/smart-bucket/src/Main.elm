@@ -195,7 +195,7 @@ update msg model =
                     ( model, Cmd.none )
 
         ( ConnectButtonClicked { id }, WalletDiscovered _ ) ->
-            ( model, toWallet (Cip30.encodeRequest (Cip30.enableWallet { id = id, extensions = [] })) )
+            ( model, toWallet (Cip30.encodeRequest (Cip30.enableWallet { id = id, extensions = [], watchInterval = Nothing })) )
 
         ( LoadBlueprintButtonClicked, WalletLoaded _ _ ) ->
             ( model
