@@ -49,6 +49,7 @@ function initElmCardano({
       } catch (error) {
         portFromWalletToElm.send({
           responseType: "cip30-error",
+          walletId: value.id,
           error: error,
         });
       }
@@ -133,9 +134,12 @@ function initElmCardano({
             clearInterval(watcher.intervalId);
             delete walletWatchers[walletId];
             // Send an error message to Elm indicating the watcher failed
+            const reportedError =
+              watchError.code < 0 ? watchError : `Error watching change address for wallet ${walletId}: ${watchError.message}`;
             portFromWalletToElm.send({
               responseType: "cip30-error",
-              error: `Error watching change address for wallet ${walletId}: ${watchError.message}`,
+              walletId,
+              error: reportedError,
             });
           }
         }, 1000 * watchInterval);

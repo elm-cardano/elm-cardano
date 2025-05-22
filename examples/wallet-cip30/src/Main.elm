@@ -197,7 +197,7 @@ update msg model =
 
                 Ok (Cip30.ApiResponse { walletId } (Cip30ApiResponse (Cip30.ChangeAddress changeAddress))) ->
                     ( { model
-                        | lastApiResponse = "wallet: " ++ walletId ++ ", change address:\n" ++ Debug.toString changeAddress
+                        | lastApiResponse = "wallet: " ++ walletId ++ ", change address:\n" ++ Address.toBech32 changeAddress
                         , connectedWallets = Dict.update walletId (Maybe.map (Cip30.updateChangeAddress changeAddress)) model.connectedWallets
 
                         -- Reset the wallet info
@@ -296,8 +296,28 @@ update msg model =
                 Ok (Cip30.ApiResponse _ (Cip95ApiResponse (Cip95.UnhandledApiResponse error))) ->
                     ( { model | lastError = Debug.toString error }, Cmd.none )
 
-                Ok (Cip30.ApiError error) ->
-                    ( { model | lastError = Debug.toString error }, Cmd.none )
+                Ok (Cip30.ApiError ({ walletId, code } as error)) ->
+                    if code == -4 then
+                        -- Code error -4 happens when the wallet account changed.
+                        -- Let’s reconnect if that wallet was connected.
+                        case walletId of
+                            Just id ->
+                                case Dict.get id model.connectedWallets of
+                                    Just wallet ->
+                                        let
+                                            extensions =
+                                                (Cip30.walletDescriptor wallet).supportedExtensions
+                                        in
+                                        ( model, toWallet (Cip30.encodeRequest (Cip30.enableWallet { id = id, extensions = extensions, watchInterval = Just 2 })) )
+
+                                    Nothing ->
+                                        ( { model | lastError = "Wallet disconnected but is not listed in connected wallet ??? " ++ id }, Cmd.none )
+
+                            _ ->
+                                ( { model | lastError = Debug.toString error }, Cmd.none )
+
+                    else
+                        ( { model | lastError = Debug.toString error }, Cmd.none )
 
                 Ok (Cip30.UnhandledResponseType error) ->
                     ( { model | lastError = error }, Cmd.none )

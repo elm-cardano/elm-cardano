@@ -84,7 +84,7 @@ walletChangeAddress (Wallet { changeAddress }) =
 
 {-| Update the change address associated with a [Wallet] object.
 -}
-updateChangeAddress :  Address -> Wallet -> Wallet
+updateChangeAddress : Address -> Wallet -> Wallet
 updateChangeAddress changeAddress (Wallet wallet) =
     Wallet { wallet | changeAddress = changeAddress }
 
@@ -350,7 +350,7 @@ type Response apiResponse
     = AvailableWallets (List WalletDescriptor)
     | EnabledWallet Wallet
     | ApiResponse { walletId : String } apiResponse
-    | ApiError { code : Int, info : String }
+    | ApiError { walletId : Maybe String, code : Int, info : String }
     | UnhandledResponseType String
 
 
@@ -417,8 +417,9 @@ responseDecoder apiDecoders =
                                 )
 
                     "cip30-error" ->
-                        JDecode.field "error" errorDecoder
-                            |> JDecode.map ApiError
+                        JDecode.map2 (\walletId error -> ApiError { walletId = walletId, code = error.code, info = error.info })
+                            (JDecode.field "walletId" <| JDecode.maybe JDecode.string)
+                            (JDecode.field "error" errorDecoder)
 
                     _ ->
                         JDecode.succeed (UnhandledResponseType responseType)
