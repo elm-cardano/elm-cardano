@@ -3,6 +3,7 @@ module Cardano.MultiAsset exposing
     , isEmpty, get, empty, onlyToken, normalize, mintAdd
     , balance, map2, split
     , coinsToCbor, mintToCbor, coinsFromCbor, mintFromCbor
+    , toData
     , toMultilineString
     )
 
@@ -12,6 +13,7 @@ module Cardano.MultiAsset exposing
 @docs isEmpty, get, empty, onlyToken, normalize, mintAdd
 @docs balance, map2, split
 @docs coinsToCbor, mintToCbor, coinsFromCbor, mintFromCbor
+@docs toData
 @docs toMultilineString
 
 -}
@@ -19,6 +21,7 @@ module Cardano.MultiAsset exposing
 import Bytes.Comparable as Bytes exposing (Bytes)
 import Bytes.Map exposing (BytesMap)
 import Cardano.Address exposing (CredentialHash)
+import Cardano.Data as Data exposing (Data)
 import Cbor.Decode as D
 import Cbor.Decode.Extra as DE
 import Cbor.Encode as E
@@ -212,6 +215,20 @@ coinsFromCbor =
 mintFromCbor : D.Decoder (MultiAsset Integer)
 mintFromCbor =
     Bytes.Map.fromCbor (Bytes.Map.fromCbor DE.integer)
+
+
+{-| Convert to Data.
+-}
+toData : (int -> Data) -> MultiAsset int -> Data
+toData intToData multiAsset =
+    bytesMapToData (Data.Map << bytesMapToData intToData) multiAsset
+        |> Data.Map
+
+
+bytesMapToData : (v -> Data) -> BytesMap k v -> List ( Data, Data )
+bytesMapToData vToData bytesMap =
+    Bytes.Map.toList bytesMap
+        |> List.map (\( bytes, v ) -> ( Data.Bytes <| Bytes.toAny bytes, vToData v ))
 
 
 {-| Helper function to display `MultiAsset`.

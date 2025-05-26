@@ -2,6 +2,7 @@ module Cardano.Value exposing
     ( Value, zero, onlyLovelace, onlyToken
     , add, addTokens, subtract, atLeast, sum, normalize, compare
     , encode, fromCbor
+    , toData
     , toMultilineString
     )
 
@@ -13,16 +14,21 @@ module Cardano.Value exposing
 
 @docs encode, fromCbor
 
+@docs toData
+
 @docs toMultilineString
 
 -}
 
-import Bytes.Comparable exposing (Bytes)
+import Bytes.Comparable as Bytes exposing (Bytes)
+import Bytes.Map
+import Cardano.Data as Data exposing (Data)
 import Cardano.MultiAsset as MultiAsset exposing (AssetName, MultiAsset, PolicyId)
 import Cbor.Decode as D
 import Cbor.Decode.Extra as DE
 import Cbor.Encode as E
 import Cbor.Encode.Extra as EE
+import Integer
 import Natural exposing (Natural)
 
 
@@ -159,6 +165,25 @@ fromCbor =
                 >> D.elem DE.natural
                 >> D.elem MultiAsset.coinsFromCbor
         ]
+
+
+{-| Convert a [Value] into [Data].
+
+The generated Data is a double Map, and will only contain
+an entry for Ada if there is more than 0 lovelace in the value.
+
+-}
+toData : Value -> Data
+toData { lovelace, assets } =
+    let
+        assetsWithAda =
+            if lovelace == Natural.zero then
+                assets
+
+            else
+                Bytes.Map.insert Bytes.empty (Bytes.Map.singleton Bytes.empty lovelace) assets
+    in
+    MultiAsset.toData (Data.Int << Integer.fromNatural) assetsWithAda
 
 
 {-| Helper function to display a `Value`.
