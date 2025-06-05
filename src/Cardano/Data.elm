@@ -117,7 +117,7 @@ toCborUplc data =
                     E.length 0
 
                 _ ->
-                    EE.indefiniteList toCbor xs
+                    EE.indefiniteList toCborUplc xs
     in
     case data of
         Constr ixNat fields ->
@@ -142,7 +142,7 @@ toCborUplc data =
                     { ixNat = ixNat, fields = fields }
 
         Map xs ->
-            EE.associativeList toCbor toCbor xs
+            EE.associativeList toCborUplc toCborUplc xs
 
         List xs ->
             encodeList xs
