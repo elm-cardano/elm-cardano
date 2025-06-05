@@ -1,7 +1,7 @@
 module Cardano.MultiAsset exposing
     ( MultiAsset, PolicyId, AssetName
-    , isEmpty, get, empty, onlyToken, normalize, mintAdd
-    , balance, map2, split
+    , isEmpty, get, set, empty, onlyToken, normalize, mintAdd
+    , balance, map, map2, split
     , coinsToCbor, mintToCbor, coinsFromCbor, mintFromCbor
     , toData
     , toMultilineString
@@ -10,8 +10,8 @@ module Cardano.MultiAsset exposing
 {-| Handling multi-asset values.
 
 @docs MultiAsset, PolicyId, AssetName
-@docs isEmpty, get, empty, onlyToken, normalize, mintAdd
-@docs balance, map2, split
+@docs isEmpty, get, set, empty, onlyToken, normalize, mintAdd
+@docs balance, map, map2, split
 @docs coinsToCbor, mintToCbor, coinsFromCbor, mintFromCbor
 @docs toData
 @docs toMultilineString
@@ -72,6 +72,15 @@ get policyId name multiAsset =
         |> Maybe.andThen (Bytes.Map.get name)
 
 
+{-| Insert a new value in the MultiAsset.
+-}
+set : Bytes PolicyId -> Bytes AssetName -> a -> MultiAsset a -> MultiAsset a
+set policyId name value multiAsset =
+    Bytes.Map.get policyId multiAsset
+        |> Maybe.withDefault Bytes.Map.empty
+        |> (\assets -> Bytes.Map.insert policyId (Bytes.Map.insert name value assets) multiAsset)
+
+
 {-| Create an empty [MultiAsset].
 -}
 empty : MultiAsset a
@@ -129,6 +138,13 @@ balance assets =
                 }
     in
     Bytes.Map.foldlWithKeys processAsset initBalance assets
+
+
+{-| Apply a function to each asset.
+-}
+map : (a -> b) -> MultiAsset a -> MultiAsset b
+map f multiAsset =
+    Bytes.Map.map (Bytes.Map.map f) multiAsset
 
 
 {-| Apply a function for each token pair of two [MultiAsset].
