@@ -3,7 +3,7 @@ module Cardano.Address exposing
     , Credential(..), StakeCredential(..), StakeCredentialPointer, CredentialHash
     , fromString, fromBech32, fromBytes
     , enterprise, script, base, pointer
-    , isShelleyWallet, extractNetworkId, extractCredentialHash, extractCredentialKeyHash, extractPubKeyHash, extractStakeCredential, extractStakeKeyHash
+    , isShelleyWallet, extractNetworkId, extractCredentialHash, extractCredentialKeyHash, extractPaymentCred, extractPubKeyHash, extractStakeCredential, extractStakeKeyHash
     , setShelleyStakeCred
     , Dict, emptyDict, dictFromList
     , StakeDict, emptyStakeDict, stakeDictFromList
@@ -23,7 +23,7 @@ module Cardano.Address exposing
 
 @docs enterprise, script, base, pointer
 
-@docs isShelleyWallet, extractNetworkId, extractCredentialHash, extractCredentialKeyHash, extractPubKeyHash, extractStakeCredential, extractStakeKeyHash
+@docs isShelleyWallet, extractNetworkId, extractCredentialHash, extractCredentialKeyHash, extractPaymentCred, extractPubKeyHash, extractStakeCredential, extractStakeKeyHash
 
 @docs setShelleyStakeCred
 
@@ -285,21 +285,24 @@ extractCredentialKeyHash cred =
             Nothing
 
 
+{-| Extract the payment credential of a Shelley wallet address.
+-}
+extractPaymentCred : Address -> Maybe Credential
+extractPaymentCred address =
+    case address of
+        Shelley { paymentCredential } ->
+            Just paymentCredential
+
+        _ ->
+            Nothing
+
+
 {-| Extract the pubkey hash of a Shelley wallet address.
 -}
 extractPubKeyHash : Address -> Maybe (Bytes CredentialHash)
 extractPubKeyHash address =
-    case address of
-        Shelley { paymentCredential } ->
-            case paymentCredential of
-                VKeyHash bytes ->
-                    Just bytes
-
-                ScriptHash _ ->
-                    Nothing
-
-        _ ->
-            Nothing
+    extractPaymentCred address
+        |> Maybe.andThen extractCredentialKeyHash
 
 
 {-| Extract the stake credential part of a Shelley address.
