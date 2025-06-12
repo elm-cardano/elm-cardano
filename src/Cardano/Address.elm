@@ -11,6 +11,7 @@ module Cardano.Address exposing
     , toBech32, toBytes, stakeAddressToBytes
     , toCbor, stakeAddressToCbor, credentialToCbor, encodeNetworkId
     , decode, decodeReward, decodeCredential
+    , credentialToData
     )
 
 {-| Handling Cardano addresses.
@@ -39,6 +40,8 @@ module Cardano.Address exposing
 
 @docs decode, decodeReward, decodeCredential
 
+@docs credentialToData
+
 -}
 
 import Bech32.Decode as Bech32
@@ -47,9 +50,11 @@ import Bitwise
 import Bytes as B
 import Bytes.Comparable as Bytes exposing (Bytes)
 import Bytes.Decode as BD
+import Cardano.Data as Data exposing (Data)
 import Cbor.Decode as D
 import Cbor.Encode as E
 import Dict.Any exposing (AnyDict)
+import Natural as N
 import Word7
 
 
@@ -546,18 +551,30 @@ toBytesHelper networkId headerType payload =
 {-| CBOR encoder for a [Credential], be it for payment or for stake.
 -}
 credentialToCbor : Credential -> E.Encoder
-credentialToCbor stakeCredential =
+credentialToCbor credential =
     E.list identity <|
-        case stakeCredential of
-            VKeyHash addrKeyHash ->
+        case credential of
+            VKeyHash keyHash ->
                 [ E.int 0
-                , Bytes.toCbor addrKeyHash
+                , Bytes.toCbor keyHash
                 ]
 
             ScriptHash scriptHash ->
                 [ E.int 1
                 , Bytes.toCbor scriptHash
                 ]
+
+
+{-| Convert a Credential to its Data representation.
+-}
+credentialToData : Credential -> Data
+credentialToData credential =
+    case credential of
+        VKeyHash keyHash ->
+            Data.Constr N.zero [ Data.Bytes <| Bytes.toAny keyHash ]
+
+        ScriptHash scriptHash ->
+            Data.Constr N.one [ Data.Bytes <| Bytes.toAny scriptHash ]
 
 
 {-| CBOR encoder for [NetworkId].
