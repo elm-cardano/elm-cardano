@@ -4,7 +4,7 @@ module Cardano.Utxo exposing
     , fromLovelace, simpleOutput
     , refAsString
     , lovelace, totalLovelace, compareLovelace, isAdaOnly, isAssetsOnly
-    , minAda, checkMinAda, minAdaForAssets, freeAda, bytesWidth
+    , minAda, checkMinAda, withMinAda, minAdaForAssets, freeAda, bytesWidth
     , encodeOutputReference, encodeOutput, encodeDatumOption
     , decodeOutputReference, decodeOutput
     , outputReferenceToData, datumValueFromData
@@ -40,7 +40,7 @@ module Cardano.Utxo exposing
 
 ## Compute
 
-@docs minAda, checkMinAda, minAdaForAssets, freeAda, bytesWidth
+@docs minAda, checkMinAda, withMinAda, minAdaForAssets, freeAda, bytesWidth
 
 
 ## Convert
@@ -230,7 +230,8 @@ freeAda output =
 {-| Compute minimum Ada lovelace for a given [Output].
 
 Since the size of the lovelace field may impact minAda,
-we adjust its value if it is too low before computation.
+we adjust its value to something 32bits,
+before adjusting again if it becomes >= 2^32.
 
 The formula is given by CIP 55,
 with current value of `4310` for `coinsPerUTxOByte`.
@@ -241,14 +242,15 @@ TODO: provide `coinsPerUTxOByte` in function arguments?
 minAda : Output -> Natural
 minAda ({ amount } as output) =
     let
-        -- make sure lovelace is encoded with at least 32 bits (so >= 2^16)
+        -- Make sure lovelace is encoded with exactly 32 bits (so >= 2^16).
+        -- Because 2^16 would correspond to 0.065 min Ada,
+        -- which is not currently possible (famous last words).
         updatedOutput =
-            if amount.lovelace |> N.isLessThan (N.fromSafeInt <| 2 ^ 16) then
-                { output | amount = { amount | lovelace = N.fromSafeInt <| 2 ^ 16 } }
-
-            else
-                output
+            { output | amount = { amount | lovelace = N.fromSafeInt <| 2 ^ 16 } }
     in
+    -- minAda is not going to overflow 32 bits,
+    -- because it would mean that its over 4294 min ada.
+    -- It’s not currently possible, and unlikely to increase that much in the future.
     N.fromSafeInt ((160 + bytesWidth updatedOutput) * 4310)
 
 
@@ -265,6 +267,14 @@ checkMinAda output =
 
     else
         Err ("Output has less ada than its required min ada (" ++ N.toString outputMinAda ++ "):\n" ++ Debug.toString output)
+
+
+{-| Modify an Output to have the minimum ada necessary,
+considering the rest of the output (assets, datum, etc.).
+-}
+withMinAda : Output -> Output
+withMinAda output =
+    { output | amount = { lovelace = minAda output, assets = output.amount.assets } }
 
 
 {-| Compute minimum Ada lovelace for a given [MultiAsset] that would be sent to a given address.
