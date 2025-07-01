@@ -48,7 +48,7 @@ import Set exposing (Set)
 
 
 {-| Script Reference type, to be used to store a script into UTxOs.
-Internally, it also stores the Bytes version of the script to later have correct fees computations.
+Internally, it stores the Bytes version of the script to later have correct fees computations.
 -}
 type Reference
     = Reference
@@ -63,26 +63,16 @@ Returns Nothing if the bytes are not a valid script.
 refFromBytes : Bytes Script -> Maybe Reference
 refFromBytes bytes =
     let
-        taggedRawScriptDecoder =
+        scriptHashDecoder =
             D.length
-                |> D.ignoreThen (D.map2 rawConcat D.raw D.raw)
+                |> D.ignoreThen (D.map2 computeScriptHash D.raw D.bytes)
 
-        rawConcat raw1 raw2 =
-            Bytes.concat (Bytes.fromBytes raw1) (Bytes.fromBytes raw2)
-
-        elmBytes =
-            Bytes.toBytes bytes
+        computeScriptHash rawScriptType scriptBytes =
+            Bytes.concat (Bytes.fromBytes rawScriptType) (Bytes.fromBytes scriptBytes)
+                |> Bytes.blake2b224
     in
-    case D.decode taggedRawScriptDecoder elmBytes of
-        Just taggedScriptBytes ->
-            Just <|
-                Reference
-                    { scriptHash = Bytes.blake2b224 taggedScriptBytes
-                    , bytes = bytes
-                    }
-
-        _ ->
-            Nothing
+    D.decode scriptHashDecoder (Bytes.toBytes bytes)
+        |> Maybe.map (\scriptHash -> Reference { scriptHash = scriptHash, bytes = bytes })
 
 
 {-| Create a Script Reference from a Script (using elm-cardano encoding approach).
