@@ -11,7 +11,7 @@ module Cardano.Address exposing
     , toBech32, toBytes, stakeAddressToBytes
     , toCbor, stakeAddressToCbor, credentialToCbor, encodeNetworkId
     , decode, decodeReward, decodeCredential
-    , credentialToData
+    , credentialToData, credentialFromData
     )
 
 {-| Handling Cardano addresses.
@@ -40,7 +40,7 @@ module Cardano.Address exposing
 
 @docs decode, decodeReward, decodeCredential
 
-@docs credentialToData
+@docs credentialToData, credentialFromData
 
 -}
 
@@ -575,6 +575,26 @@ credentialToData credential =
 
         ScriptHash scriptHash ->
             Data.Constr N.one [ Data.Bytes <| Bytes.toAny scriptHash ]
+
+
+{-| Decode a Credential from its Data representation.
+-}
+credentialFromData : Data -> Maybe Credential
+credentialFromData data =
+    case data of
+        Data.Constr index [ Data.Bytes keyHash ] ->
+            case ( N.toInt index, Bytes.width keyHash ) of
+                ( 0, 28 ) ->
+                    Just <| VKeyHash <| Bytes.fromHexUnchecked <| Bytes.toHex keyHash
+
+                ( 1, 28 ) ->
+                    Just <| ScriptHash <| Bytes.fromHexUnchecked <| Bytes.toHex keyHash
+
+                _ ->
+                    Nothing
+
+        _ ->
+            Nothing
 
 
 {-| CBOR encoder for [NetworkId].
