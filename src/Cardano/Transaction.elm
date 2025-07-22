@@ -112,6 +112,12 @@ type alias TransactionBody =
     , proposalProcedures : List ProposalProcedure -- 20 Proposal procedures
     , currentTreasuryValue : Maybe Natural -- 21 Current treasury value
     , treasuryDonation : Maybe Natural -- 22 Donation
+
+    -- Nested Transaction CIP-118
+    , subtxIds : List (Bytes TransactionId)
+    , observerScripts : List (Bytes CredentialHash)
+    , subTxOutputs : List Output
+    , subTxInputs : List OutputReference
     }
 
 

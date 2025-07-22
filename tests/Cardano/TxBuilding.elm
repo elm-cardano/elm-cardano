@@ -7,10 +7,11 @@ import Cardano.CoinSelection as CoinSelection exposing (Error(..))
 import Cardano.Data as Data
 import Cardano.Gov as Gov exposing (Drep(..), Vote(..), Voter(..), noParamUpdate)
 import Cardano.Metadatum as Metadatum
-import Cardano.MultiAsset as MultiAsset exposing (PolicyId)
+import Cardano.MultiAsset as MultiAsset exposing (MultiAsset, PolicyId)
 import Cardano.Redeemer exposing (Redeemer)
 import Cardano.Script as Script exposing (NativeScript(..), PlutusVersion(..))
 import Cardano.Transaction as Transaction exposing (Certificate(..), Transaction, newBody, newWitnessSet)
+import Cardano.TxExamples exposing (prettyTx)
 import Cardano.TxIntent as TxIntent exposing (ActionProposal(..), CertificateIntent(..), Fee(..), GovernanceState, SpendSource(..), TxFinalizationError(..), TxFinalized, TxIntent(..), TxOtherInfo(..), finalizeAdvanced)
 import Cardano.Uplc as Uplc
 import Cardano.Utxo as Utxo exposing (DatumOption(..), Output, OutputReference)
@@ -28,6 +29,7 @@ suite =
         [ okTxBuilding
         , failTxBuilding
         , balanceIntents
+        , babelFees
         ]
 
 
@@ -1780,12 +1782,146 @@ failTxTest description { govState, localStateUtxos, evalScriptsCosts, fee, txOth
                     Expect.fail "This Tx building was not supposed to succeed"
 
 
-newTx =
-    Transaction.new
+
+-- Babel Fees
+
+
+babelFees : Test
+babelFees =
+    describe "Babel Fees"
+        [ test "No Babel fee" testNoBabelFee
+        , test "Manual Babel fee" testManualBabelFee
+        ]
+
+
+testNoBabelFee _ =
+    let
+        localStateUtxos =
+            Utxo.refDictFromList <|
+                -- ME: ₳5 and $100
+                [ ( makeRef "0" 0, Utxo.simpleOutput testAddr.me { lovelace = ada 5, assets = usdm 100 } ) ]
+
+        intents =
+            [ spendFrom testAddr.me { lovelace = ada 2, assets = usdm 20 }
+            , SendTo testAddr.you { lovelace = ada 2, assets = usdm 20 }
+            ]
+    in
+    case TxIntent.finalize localStateUtxos [] intents of
+        Err error ->
+            Expect.fail (TxIntent.errorToString error)
+
+        Ok txFinalized ->
+            let
+                _ =
+                    Debug.log "Tx with no Babel fee" (stats txFinalized)
+            in
+            Debug.todo "Eventually move this into an example instead"
+
+
+testManualBabelFee _ =
+    let
+        localStateUtxos =
+            Utxo.refDictFromList <|
+                -- ME: ₳5 and $100
+                [ ( makeRef "0" 0, Utxo.simpleOutput testAddr.me { lovelace = ada 5, assets = usdm 100 } )
+
+                -- YOU: ₳3 and $20
+                , ( makeRef "1" 1, Utxo.simpleOutput testAddr.you { lovelace = ada 3, assets = usdm 20 } )
+                ]
+
+        intents =
+            -- Send $20 from ME to YOU
+            [ spendFrom testAddr.me { lovelace = ada 0, assets = usdm 20 }
+            , SendTo testAddr.you { lovelace = ada 0, assets = usdm 20 }
+            ]
+
+        txResult =
+            TxIntent.finalizeAdvanced
+                { govState = TxIntent.emptyGovernanceState
+                , localStateUtxos = localStateUtxos
+                , coinSelectionAlgo = CoinSelection.largestFirst
+                , evalScriptsCosts =
+                    Uplc.evalScriptsCosts
+                        { budget = Uplc.conwayDefaultBudget
+                        , slotConfig = Uplc.slotConfigMainnet
+                        , costModels = Uplc.conwayDefaultCostModels
+                        }
+                , costModels = Uplc.conwayDefaultCostModels
+                }
+                -- YOU pay the Tx fees
+                (AutoFee { paymentSource = testAddr.you })
+                []
+                intents
+
+        -- fees tx =
+        --     Transaction.computeFees Transaction.defaultTxFeeParams { refScriptBytes = 0 } tx
+    in
+    case txResult of
+        Err error ->
+            Expect.fail (TxIntent.errorToString error)
+
+        Ok txFinalized ->
+            let
+                _ =
+                    Debug.log "Tx with manual Babel fee" (stats txFinalized)
+            in
+            Debug.todo "Eventually move this into an example instead"
+
+
+stats : TxFinalized -> String
+stats { tx, expectedSignatures } =
+    let
+        signatures =
+            expectedSignatures
+                |> List.map
+                    (\hash ->
+                        { vkey = Bytes.dummyWithPrefix 32 hash
+                        , signature = Bytes.dummyWithPrefix 64 hash
+                        }
+                    )
+
+        signedTx =
+            Transaction.updateSignatures (\_ -> Just signatures) tx
+
+        cbor =
+            Transaction.serialize signedTx
+
+        txSize =
+            Bytes.width cbor
+
+        tps =
+            maxBlockBodySize / toFloat txSize / 20
+    in
+    String.join "\n\n"
+        [ "pretty: " ++ prettyTx signedTx
+        , "cbor: " ++ Bytes.toHex cbor
+        , "tps: " ++ String.fromFloat tps ++ " -- tx size: " ++ String.fromInt txSize ++ " Bytes"
+        ]
+
+
+usdm : Float -> MultiAsset Natural
+usdm amount =
+    MultiAsset.onlyToken
+        (Bytes.fromHexUnchecked "c48cbb3d5e57ed56e276bc45f99ab39abe94e6cd7ac39fb402da47ad")
+        (Bytes.fromText "USDM")
+        (round (100 * amount) |> Natural.fromSafeInt |> Natural.mul (Natural.fromSafeInt 10000))
+
+
+spendFrom : Address -> Value -> TxIntent
+spendFrom addr value =
+    Spend <| FromWallet { address = addr, value = value, guaranteedUtxos = [] }
+
+
+maxBlockBodySize =
+    90112
 
 
 
 -- Test data
+
+
+newTx =
+    Transaction.new
 
 
 indexedScript =
@@ -1910,7 +2046,7 @@ makeAsset index address policyId name amount =
     )
 
 
-makeAdaOutput : Int -> Address -> Int -> ( OutputReference, Output )
+makeAdaOutput : Int -> Address -> Float -> ( OutputReference, Output )
 makeAdaOutput index address amount =
     ( makeRef (String.fromInt index) index
     , Utxo.fromLovelace address (ada amount)
@@ -1922,7 +2058,8 @@ makeToken policyId name amount =
     Value.onlyToken policyId (Bytes.fromText name) (Natural.fromSafeInt amount)
 
 
-ada : Int -> Natural
+ada : Float -> Natural
 ada n =
-    Natural.fromSafeInt n
-        |> Natural.mul (Natural.fromSafeInt 1000000)
+    round (100 * n)
+        |> Natural.fromSafeInt
+        |> Natural.mul (Natural.fromSafeInt 10000)
