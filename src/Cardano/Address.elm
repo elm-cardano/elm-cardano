@@ -11,7 +11,7 @@ module Cardano.Address exposing
     , toBech32, toBytes, stakeAddressToBytes
     , toCbor, stakeAddressToCbor, credentialToCbor, encodeNetworkId
     , decode, decodeReward, decodeCredential
-    , credentialToData, credentialFromData
+    , toData, credentialToData, credentialFromData, stakeCredentialToData
     )
 
 {-| Handling Cardano addresses.
@@ -40,7 +40,7 @@ module Cardano.Address exposing
 
 @docs decode, decodeReward, decodeCredential
 
-@docs credentialToData, credentialFromData
+@docs toData, credentialToData, credentialFromData, stakeCredentialToData
 
 -}
 
@@ -565,6 +565,32 @@ credentialToCbor credential =
                 ]
 
 
+{-| Helper to convert an address into its onchain Data representation.
+
+For the Shelley address variant, the address will be converted into its onchain representation with a payment credential and a stake credential.
+For the Reward address variant, just the stake credential will be converted.
+
+WARNING: This will return Void for a Byron address for convenience since they are not supposed to be used in contracts.
+It’s the caller responsibility to not call this function with a Byron address.
+
+-}
+toData : Address -> Data
+toData address =
+    case address of
+        Shelley { paymentCredential, stakeCredential } ->
+            Data.Constr N.zero
+                [ credentialToData paymentCredential
+                , Maybe.map stakeCredentialToData stakeCredential
+                    |> Data.maybe
+                ]
+
+        Reward { stakeCredential } ->
+            credentialToData stakeCredential
+
+        Byron _ ->
+            Data.Constr N.zero []
+
+
 {-| Convert a Credential to its Data representation.
 -}
 credentialToData : Credential -> Data
@@ -595,6 +621,22 @@ credentialFromData data =
 
         _ ->
             Nothing
+
+
+{-| Convert a stake credential into its Data representation.
+
+WARNING: Pointer credentials are not supported.
+They will return just `Constr 1 []` so it’s the caller responsibility to not use them.
+
+-}
+stakeCredentialToData : StakeCredential -> Data
+stakeCredentialToData stakeCredential =
+    case stakeCredential of
+        InlineCredential credential ->
+            Data.Constr N.zero [ credentialToData credential ]
+
+        PointerCredential _ ->
+            Data.Constr N.one []
 
 
 {-| CBOR encoder for [NetworkId].
