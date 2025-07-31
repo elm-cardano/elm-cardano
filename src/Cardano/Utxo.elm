@@ -8,6 +8,7 @@ module Cardano.Utxo exposing
     , encodeOutputReference, encodeOutput, encodeDatumOption
     , decodeOutputReference, decodeOutput
     , outputReferenceToData, datumValueFromData
+    , datumOptionToData
     )
 
 {-| Handling outputs.
@@ -50,6 +51,8 @@ module Cardano.Utxo exposing
 @docs decodeOutputReference, decodeOutput
 
 @docs outputReferenceToData, datumValueFromData
+
+@docs datumOptionToData
 
 -}
 
@@ -445,3 +448,18 @@ outputReferenceToData outRef =
         [ Data.Bytes <| Bytes.toAny outRef.transactionId
         , Data.Int <| I.fromSafeInt outRef.outputIndex
         ]
+
+
+{-| Convert a DatumOption into it’s Plutus Data representation.
+-}
+datumOptionToData : Maybe DatumOption -> Data
+datumOptionToData maybeDatum =
+    case maybeDatum of
+        Nothing ->
+            Data.Constr N.zero []
+
+        Just (DatumHash hash) ->
+            Data.Constr N.one [ Data.Bytes <| Bytes.toAny hash ]
+
+        Just (DatumValue { rawBytes }) ->
+            Data.Constr N.two [ Data.Bytes <| Bytes.toAny rawBytes ]
