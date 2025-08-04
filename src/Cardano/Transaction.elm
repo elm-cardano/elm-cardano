@@ -6,7 +6,7 @@ module Cardano.Transaction exposing
     , ScriptContext, ScriptPurpose(..)
     , Certificate(..), GenesisHash, GenesisDelegateHash, RewardSource(..), RewardTarget(..), MoveInstantaneousReward
     , VKeyWitness, hashVKey, BootstrapWitness, Ed25519PublicKey, Ed25519Signature, BootstrapWitnessChainCode, BootstrapWitnessAttributes
-    , FeeParameters, RefScriptFeeParameters, defaultTxFeeParams, computeFees, computeRefScriptFee, computeScriptExecFee, computeTxSizeFee, estimateRefScriptFeeSavings
+    , FeeParameters, RefScriptFeeParameters, defaultTxFeeParams, computeFees, computeRefScriptFee, computeScriptExecFee, computeTxSizeFee, estimateRefScriptFeeSavings, computeTotalExecUnits
     , allInputs
     , computeTxId, locateScriptWithHash
     , updateSignatures, hashScriptData
@@ -30,7 +30,7 @@ module Cardano.Transaction exposing
 
 @docs VKeyWitness, hashVKey, BootstrapWitness, Ed25519PublicKey, Ed25519Signature, BootstrapWitnessChainCode, BootstrapWitnessAttributes
 
-@docs FeeParameters, RefScriptFeeParameters, defaultTxFeeParams, computeFees, computeRefScriptFee, computeScriptExecFee, computeTxSizeFee, estimateRefScriptFeeSavings
+@docs FeeParameters, RefScriptFeeParameters, defaultTxFeeParams, computeFees, computeRefScriptFee, computeScriptExecFee, computeTxSizeFee, estimateRefScriptFeeSavings, computeTotalExecUnits
 
 @docs allInputs
 
@@ -411,16 +411,8 @@ computeTxSizeFee { baseFee, feePerByte } tx =
 computeScriptExecFee : ExUnitPrices -> Transaction -> Natural
 computeScriptExecFee { stepPrice, memPrice } tx =
     let
-        ( totalSteps, totalMem ) =
-            tx.witnessSet.redeemer
-                |> Maybe.withDefault []
-                |> List.foldl
-                    (\r ( steps, mem ) ->
-                        ( Natural.add steps <| Natural.fromSafeInt r.exUnits.steps
-                        , Natural.add mem <| Natural.fromSafeInt r.exUnits.mem
-                        )
-                    )
-                    ( Natural.zero, Natural.zero )
+        { totalSteps, totalMem } =
+            computeTotalExecUnits tx
 
         totalStepsCost =
             Natural.mul totalSteps (Natural.fromSafeInt stepPrice.numerator)
@@ -433,6 +425,21 @@ computeScriptExecFee { stepPrice, memPrice } tx =
                 |> Maybe.withDefault Natural.zero
     in
     Natural.add totalStepsCost totalMemCost
+
+
+{-| Compute the total execution units of a Transaction.
+-}
+computeTotalExecUnits : Transaction -> { totalMem : Natural, totalSteps : Natural }
+computeTotalExecUnits { witnessSet } =
+    witnessSet.redeemer
+        |> Maybe.withDefault []
+        |> List.foldl
+            (\r { totalSteps, totalMem } ->
+                { totalSteps = Natural.add totalSteps <| Natural.fromSafeInt r.exUnits.steps
+                , totalMem = Natural.add totalMem <| Natural.fromSafeInt r.exUnits.mem
+                }
+            )
+            { totalMem = Natural.zero, totalSteps = Natural.zero }
 
 
 {-| Helper function to compute the fees associated with reference script size.

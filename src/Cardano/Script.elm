@@ -4,7 +4,7 @@ module Cardano.Script exposing
     , nativeScriptFromBytes, nativeScriptBytes
     , plutusScriptFromBytes, plutusVersion, cborWrappedBytes
     , toCbor, encodeNativeScript
-    , fromCbor, decodeNativeScript, jsonDecodeNativeScript
+    , fromCbor, decodeNativeScript, jsonDecodeNativeScript, jsonEncodeNativeScript
     )
 
 {-| Script
@@ -28,7 +28,7 @@ module Cardano.Script exposing
 
 ## CBOR and JSON Decoders
 
-@docs fromCbor, decodeNativeScript, jsonDecodeNativeScript
+@docs fromCbor, decodeNativeScript, jsonDecodeNativeScript, jsonEncodeNativeScript
 
 -}
 
@@ -42,6 +42,7 @@ import Cbor.Encode as E
 import Cbor.Encode.Extra as EE
 import Dict exposing (Dict)
 import Json.Decode as JD
+import Json.Encode as JE
 import List.Extra
 import Natural exposing (Natural)
 import Set exposing (Set)
@@ -626,3 +627,49 @@ jsonDecodeNativeScript =
                     _ ->
                         JD.fail <| "Unknown type: " ++ nodeType
             )
+
+
+{-| Encode a NativeScript into its JSON node specification.
+
+<https://github.com/IntersectMBO/cardano-node/blob/40ebadd4b70530f89fe76513c108a1a356ad16ea/doc/reference/simple-scripts.md#type-after>
+
+-}
+jsonEncodeNativeScript : NativeScript -> JE.Value
+jsonEncodeNativeScript nativeScript =
+    case nativeScript of
+        ScriptPubkey keyHash ->
+            JE.object
+                [ ( "type", JE.string "sig" )
+                , ( "keyHash", JE.string (Bytes.toHex keyHash) )
+                ]
+
+        ScriptAll scripts ->
+            JE.object
+                [ ( "type", JE.string "all" )
+                , ( "scripts", JE.list jsonEncodeNativeScript scripts )
+                ]
+
+        ScriptAny scripts ->
+            JE.object
+                [ ( "type", JE.string "any" )
+                , ( "scripts", JE.list jsonEncodeNativeScript scripts )
+                ]
+
+        ScriptNofK n scripts ->
+            JE.object
+                [ ( "type", JE.string "atLeast" )
+                , ( "required", JE.int n )
+                , ( "scripts", JE.list jsonEncodeNativeScript scripts )
+                ]
+
+        InvalidBefore slot ->
+            JE.object
+                [ ( "type", JE.string "before" )
+                , ( "slot", JE.int <| Natural.toInt slot )
+                ]
+
+        InvalidHereafter slot ->
+            JE.object
+                [ ( "type", JE.string "after" )
+                , ( "slot", JE.int <| Natural.toInt slot )
+                ]

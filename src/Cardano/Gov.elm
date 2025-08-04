@@ -15,6 +15,7 @@ module Cardano.Gov exposing
     , Vote(..), encodeVote
     , Voter(..), VoterDict, emptyVoterDict, voterDictFromList, voterToId, voterCredentialHash, voterKeyCred, voterLedgerOrder, voterFromCbor, encodeVoter
     , Anchor, AnchorDataHash, decodeAnchor, encodeAnchor
+    , defaultMaxTxSize, defaultMaxTxExUnits
     )
 
 {-| Handling gov-related stuff.
@@ -51,6 +52,8 @@ module Cardano.Gov exposing
 
 @docs Anchor, AnchorDataHash, decodeAnchor, encodeAnchor
 
+@docs defaultMaxTxSize, defaultMaxTxExUnits
+
 -}
 
 import Bech32.Decode as Bech32
@@ -69,6 +72,7 @@ import Cbor.Encode.Extra as EE
 import Dict.Any exposing (AnyDict)
 import List.Extra
 import Natural exposing (Natural)
+import UInt64 exposing (toInt31)
 
 
 {-| Governance Id related to [CIP 129](https://github.com/cardano-foundation/CIPs/blob/master/CIP-0129/README.md).
@@ -450,7 +454,7 @@ type alias ActionId =
     }
 
 
-{-| Convert [ActionId] into its Hex string.
+{-| Convert [ActionId] into a String representation with # as a separator.
 -}
 actionIdToString : ActionId -> String
 actionIdToString { transactionId, govActionIndex } =
@@ -831,6 +835,26 @@ type Nonce
 -}
 type alias ProtocolVersion =
     ( Int, Int )
+
+
+
+-- DEFAULTS
+
+
+{-| Default value for max Transaction size on Mainnet on 2025-08-02.
+-}
+defaultMaxTxSize : Int
+defaultMaxTxSize =
+    16384
+
+
+{-| Default value for max ExUnits on Mainnet on 2025-08-02.
+-}
+defaultMaxTxExUnits : ExUnits
+defaultMaxTxExUnits =
+    { steps = 10000000000
+    , mem = 14000000
+    }
 
 
 

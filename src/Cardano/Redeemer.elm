@@ -58,7 +58,7 @@ type alias ExUnitPrices =
     }
 
 
-{-| Helper function to compute a give redeemer cost in fees.
+{-| Helper function to compute a given redeemer cost in fees.
 -}
 feeCost : ExUnitPrices -> ExUnits -> Natural
 feeCost scriptExUnitPrice { mem, steps } =
