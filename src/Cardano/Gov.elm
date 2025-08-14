@@ -72,7 +72,6 @@ import Cbor.Encode.Extra as EE
 import Dict.Any exposing (AnyDict)
 import List.Extra
 import Natural exposing (Natural)
-import UInt64 exposing (toInt31)
 
 
 {-| Governance Id related to [CIP 129](https://github.com/cardano-foundation/CIPs/blob/master/CIP-0129/README.md).
