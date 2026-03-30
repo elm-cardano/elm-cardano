@@ -36,7 +36,8 @@ type Data
 -}
 hash : Data -> Bytes a
 hash data =
-    E.encode (toCbor data)
+    -- Use toCborUplc to encode correctly the Data before hashing
+    E.encode (toCborUplc data)
         |> Bytes.fromBytes
         |> Bytes.blake2b256
 
