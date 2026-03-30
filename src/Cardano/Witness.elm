@@ -254,6 +254,7 @@ checkNativeScript localStateUtxos expectedHash { script, expectedSigners } =
     case script of
         ByValue nativeScript ->
             checkScriptMatch { expected = expectedHash, witness = Script.hash <| Script.Native nativeScript }
+                "Provided witness (by value) has wrong script hash"
                 |> Result.andThen (checkSigners nativeScript)
 
         ByReference outputRef ->
@@ -269,6 +270,7 @@ checkNativeScript localStateUtxos expectedHash { script, expectedSigners } =
 
                             Just (Script.Native nativeScript) ->
                                 checkScriptMatch { expected = expectedHash, witness = Script.refHash scriptRef }
+                                    ("Provided witness (by reference: " ++ Utxo.refAsString outputRef ++ ") has wrong script hash")
                                     |> Result.andThen (checkSigners nativeScript)
                     )
 
@@ -366,6 +368,7 @@ checkPlutusScript localStateUtxos expectedHash plutusScriptWitness =
                         |> Script.hash
             in
             checkScriptMatch { expected = expectedHash, witness = computedScriptHash }
+                "Provided witness (by value) has wrong script hash"
 
         ByReference outputRef ->
             let
@@ -379,16 +382,20 @@ checkPlutusScript localStateUtxos expectedHash plutusScriptWitness =
             in
             getRefScript localStateUtxos outputRef
                 |> Result.andThen checkValidScript
-                |> Result.andThen (\scriptRef -> checkScriptMatch { expected = expectedHash, witness = Script.refHash scriptRef })
+                |> Result.andThen
+                    (\scriptRef ->
+                        checkScriptMatch { expected = expectedHash, witness = Script.refHash scriptRef }
+                            ("Provided witness (by reference: " ++ Utxo.refAsString outputRef ++ ") has wrong script hash")
+                    )
 
 
-checkScriptMatch : { expected : Bytes CredentialHash, witness : Bytes CredentialHash } -> Result Error ()
-checkScriptMatch hashes =
+checkScriptMatch : { expected : Bytes CredentialHash, witness : Bytes CredentialHash } -> String -> Result Error ()
+checkScriptMatch hashes errorMsg =
     if hashes.expected == hashes.witness then
         Ok ()
 
     else
-        Err <| ScriptHashMismatch hashes "Provided witness has wrong script hash"
+        Err <| ScriptHashMismatch hashes errorMsg
 
 
 getRefScript : Utxo.RefDict Output -> OutputReference -> Result Error Script.Reference

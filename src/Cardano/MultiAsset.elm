@@ -1,17 +1,19 @@
 module Cardano.MultiAsset exposing
     ( MultiAsset, PolicyId, AssetName
-    , isEmpty, get, empty, onlyToken, normalize, mintAdd
-    , balance, map2, split
+    , isEmpty, get, set, empty, onlyToken, normalize, mintAdd
+    , balance, map, map2, split
     , coinsToCbor, mintToCbor, coinsFromCbor, mintFromCbor
+    , toData
     , toMultilineString
     )
 
 {-| Handling multi-asset values.
 
 @docs MultiAsset, PolicyId, AssetName
-@docs isEmpty, get, empty, onlyToken, normalize, mintAdd
-@docs balance, map2, split
+@docs isEmpty, get, set, empty, onlyToken, normalize, mintAdd
+@docs balance, map, map2, split
 @docs coinsToCbor, mintToCbor, coinsFromCbor, mintFromCbor
+@docs toData
 @docs toMultilineString
 
 -}
@@ -19,6 +21,7 @@ module Cardano.MultiAsset exposing
 import Bytes.Comparable as Bytes exposing (Bytes)
 import Bytes.Map exposing (BytesMap)
 import Cardano.Address exposing (CredentialHash)
+import Cardano.Data as Data exposing (Data)
 import Cbor.Decode as D
 import Cbor.Decode.Extra as DE
 import Cbor.Encode as E
@@ -67,6 +70,15 @@ get : Bytes PolicyId -> Bytes AssetName -> MultiAsset a -> Maybe a
 get policyId name multiAsset =
     Bytes.Map.get policyId multiAsset
         |> Maybe.andThen (Bytes.Map.get name)
+
+
+{-| Insert a new value in the MultiAsset.
+-}
+set : Bytes PolicyId -> Bytes AssetName -> a -> MultiAsset a -> MultiAsset a
+set policyId name value multiAsset =
+    Bytes.Map.get policyId multiAsset
+        |> Maybe.withDefault Bytes.Map.empty
+        |> (\assets -> Bytes.Map.insert policyId (Bytes.Map.insert name value assets) multiAsset)
 
 
 {-| Create an empty [MultiAsset].
@@ -126,6 +138,13 @@ balance assets =
                 }
     in
     Bytes.Map.foldlWithKeys processAsset initBalance assets
+
+
+{-| Apply a function to each asset.
+-}
+map : (a -> b) -> MultiAsset a -> MultiAsset b
+map f multiAsset =
+    Bytes.Map.map (Bytes.Map.map f) multiAsset
 
 
 {-| Apply a function for each token pair of two [MultiAsset].
@@ -212,6 +231,20 @@ coinsFromCbor =
 mintFromCbor : D.Decoder (MultiAsset Integer)
 mintFromCbor =
     Bytes.Map.fromCbor (Bytes.Map.fromCbor DE.integer)
+
+
+{-| Convert to Data.
+-}
+toData : (int -> Data) -> MultiAsset int -> Data
+toData intToData multiAsset =
+    bytesMapToData (Data.Map << bytesMapToData intToData) multiAsset
+        |> Data.Map
+
+
+bytesMapToData : (v -> Data) -> BytesMap k v -> List ( Data, Data )
+bytesMapToData vToData bytesMap =
+    Bytes.Map.toList bytesMap
+        |> List.map (\( bytes, v ) -> ( Data.Bytes <| Bytes.toAny bytes, vToData v ))
 
 
 {-| Helper function to display `MultiAsset`.

@@ -1,8 +1,13 @@
-module Cardano.Data exposing (Data(..), hash, rawDatumHash, fromBytes, fromCbor, toCbor, toCborUplc)
+module Cardano.Data exposing
+    ( Data(..), hash, rawDatumHash, fromBytes, fromCbor, toCbor, toCborUplc
+    , maybe
+    )
 
 {-| Handling Cardano Data objects.
 
 @docs Data, hash, rawDatumHash, fromBytes, fromCbor, toCbor, toCborUplc
+
+@docs maybe
 
 -}
 
@@ -117,7 +122,7 @@ toCborUplc data =
                     E.length 0
 
                 _ ->
-                    EE.indefiniteList toCbor xs
+                    EE.indefiniteList toCborUplc xs
     in
     case data of
         Constr ixNat fields ->
@@ -142,7 +147,7 @@ toCborUplc data =
                     { ixNat = ixNat, fields = fields }
 
         Map xs ->
-            EE.associativeList toCbor toCbor xs
+            EE.associativeList toCborUplc toCborUplc xs
 
         List xs ->
             encodeList xs
@@ -313,3 +318,19 @@ collectCborItems st items =
 
                 Nothing ->
                     Nothing
+
+
+
+-- Helper functions
+
+
+{-| Helper function to encode as Data an optional value.
+-}
+maybe : Maybe Data -> Data
+maybe maybeData =
+    case maybeData of
+        Just data ->
+            Constr Natural.zero [ data ]
+
+        Nothing ->
+            Constr Natural.one []

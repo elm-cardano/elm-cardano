@@ -6,6 +6,7 @@ module Cardano.TxIntent exposing
     , TxOtherInfo(..)
     , Fee(..)
     , GovernanceState, emptyGovernanceState
+    , defaultEvalScriptsCosts
     , updateLocalState
     )
 
@@ -46,6 +47,7 @@ and finally trying to validate it and auto-populate all requirements.
 @docs TxOtherInfo
 @docs Fee
 @docs GovernanceState, emptyGovernanceState
+@docs defaultEvalScriptsCosts
 @docs updateLocalState
 
 -}
@@ -499,49 +501,52 @@ finalize localStateUtxos txOtherInfo txIntents =
         |> Result.andThen (\_ -> guessFeeSource txIntents)
         |> Result.andThen
             (\feeSource ->
-                let
-                    defaultEvalScriptsCosts =
-                        if containPlutusScripts txIntents then
-                            let
-                                network =
-                                    case feeSource of
-                                        Byron _ ->
-                                            Debug.todo "Byron addresses are not unsupported"
-
-                                        Shelley { networkId } ->
-                                            networkId
-
-                                        Reward { networkId } ->
-                                            networkId
-
-                                slotConfig =
-                                    case network of
-                                        Mainnet ->
-                                            Uplc.slotConfigMainnet
-
-                                        Testnet ->
-                                            Uplc.slotConfigPreview
-                            in
-                            Uplc.evalScriptsCosts
-                                { budget = Uplc.conwayDefaultBudget
-                                , slotConfig = slotConfig
-                                , costModels = Uplc.conwayDefaultCostModels
-                                }
-
-                        else
-                            \_ _ -> Ok []
-                in
                 finalizeAdvanced
                     { govState = emptyGovernanceState -- proposals are forbidden in simple finalize anyway
                     , localStateUtxos = localStateUtxos
                     , coinSelectionAlgo = CoinSelection.largestFirst
-                    , evalScriptsCosts = defaultEvalScriptsCosts
+                    , evalScriptsCosts = defaultEvalScriptsCosts feeSource txIntents
                     , costModels = Uplc.conwayDefaultCostModels
                     }
                     (AutoFee { paymentSource = feeSource })
                     txOtherInfo
                     txIntents
             )
+
+
+{-| Helper function for the default Conway script evaluation costs.
+-}
+defaultEvalScriptsCosts : Address -> List TxIntent -> Utxo.RefDict Output -> Transaction -> Result String (List Redeemer)
+defaultEvalScriptsCosts feeSource txIntents =
+    if containPlutusScripts txIntents then
+        let
+            network =
+                case feeSource of
+                    Byron _ ->
+                        Debug.todo "Byron addresses are not unsupported"
+
+                    Shelley { networkId } ->
+                        networkId
+
+                    Reward { networkId } ->
+                        networkId
+
+            slotConfig =
+                case network of
+                    Mainnet ->
+                        Uplc.slotConfigMainnet
+
+                    Testnet ->
+                        Uplc.slotConfigPreview
+        in
+        Uplc.evalScriptsCosts
+            { budget = Uplc.conwayDefaultBudget
+            , slotConfig = slotConfig
+            , costModels = Uplc.conwayDefaultCostModels
+            }
+
+    else
+        \_ _ -> Ok []
 
 
 {-| Simple helper function needed to check that there isn’t any proposal

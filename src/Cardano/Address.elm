@@ -3,7 +3,7 @@ module Cardano.Address exposing
     , Credential(..), StakeCredential(..), StakeCredentialPointer, CredentialHash
     , fromString, fromBech32, fromBytes
     , enterprise, script, base, pointer
-    , isShelleyWallet, extractNetworkId, extractCredentialHash, extractCredentialKeyHash, extractPubKeyHash, extractStakeCredential, extractStakeKeyHash
+    , isShelleyWallet, extractNetworkId, extractCredentialHash, extractCredentialKeyHash, extractPaymentCred, extractPubKeyHash, extractStakeCredential, extractStakeKeyHash
     , setShelleyStakeCred
     , Dict, emptyDict, dictFromList
     , StakeDict, emptyStakeDict, stakeDictFromList
@@ -11,6 +11,7 @@ module Cardano.Address exposing
     , toBech32, toBytes, stakeAddressToBytes
     , toCbor, stakeAddressToCbor, credentialToCbor, encodeNetworkId
     , decode, decodeReward, decodeCredential
+    , toData, credentialToData, credentialFromData, stakeCredentialToData
     )
 
 {-| Handling Cardano addresses.
@@ -23,7 +24,7 @@ module Cardano.Address exposing
 
 @docs enterprise, script, base, pointer
 
-@docs isShelleyWallet, extractNetworkId, extractCredentialHash, extractCredentialKeyHash, extractPubKeyHash, extractStakeCredential, extractStakeKeyHash
+@docs isShelleyWallet, extractNetworkId, extractCredentialHash, extractCredentialKeyHash, extractPaymentCred, extractPubKeyHash, extractStakeCredential, extractStakeKeyHash
 
 @docs setShelleyStakeCred
 
@@ -39,6 +40,8 @@ module Cardano.Address exposing
 
 @docs decode, decodeReward, decodeCredential
 
+@docs toData, credentialToData, credentialFromData, stakeCredentialToData
+
 -}
 
 import Bech32.Decode as Bech32
@@ -47,9 +50,11 @@ import Bitwise
 import Bytes as B
 import Bytes.Comparable as Bytes exposing (Bytes)
 import Bytes.Decode as BD
+import Cardano.Data as Data exposing (Data)
 import Cbor.Decode as D
 import Cbor.Encode as E
 import Dict.Any exposing (AnyDict)
+import Natural as N
 import Word7
 
 
@@ -285,21 +290,24 @@ extractCredentialKeyHash cred =
             Nothing
 
 
+{-| Extract the payment credential of a Shelley wallet address.
+-}
+extractPaymentCred : Address -> Maybe Credential
+extractPaymentCred address =
+    case address of
+        Shelley { paymentCredential } ->
+            Just paymentCredential
+
+        _ ->
+            Nothing
+
+
 {-| Extract the pubkey hash of a Shelley wallet address.
 -}
 extractPubKeyHash : Address -> Maybe (Bytes CredentialHash)
 extractPubKeyHash address =
-    case address of
-        Shelley { paymentCredential } ->
-            case paymentCredential of
-                VKeyHash bytes ->
-                    Just bytes
-
-                ScriptHash _ ->
-                    Nothing
-
-        _ ->
-            Nothing
+    extractPaymentCred address
+        |> Maybe.andThen extractCredentialKeyHash
 
 
 {-| Extract the stake credential part of a Shelley address.
@@ -543,18 +551,92 @@ toBytesHelper networkId headerType payload =
 {-| CBOR encoder for a [Credential], be it for payment or for stake.
 -}
 credentialToCbor : Credential -> E.Encoder
-credentialToCbor stakeCredential =
+credentialToCbor credential =
     E.list identity <|
-        case stakeCredential of
-            VKeyHash addrKeyHash ->
+        case credential of
+            VKeyHash keyHash ->
                 [ E.int 0
-                , Bytes.toCbor addrKeyHash
+                , Bytes.toCbor keyHash
                 ]
 
             ScriptHash scriptHash ->
                 [ E.int 1
                 , Bytes.toCbor scriptHash
                 ]
+
+
+{-| Helper to convert an address into its onchain Data representation.
+
+For the Shelley address variant, the address will be converted into its onchain representation with a payment credential and a stake credential.
+For the Reward address variant, just the stake credential will be converted.
+
+WARNING: This will return Void for a Byron address for convenience since they are not supposed to be used in contracts.
+It’s the caller responsibility to not call this function with a Byron address.
+
+-}
+toData : Address -> Data
+toData address =
+    case address of
+        Shelley { paymentCredential, stakeCredential } ->
+            Data.Constr N.zero
+                [ credentialToData paymentCredential
+                , Maybe.map stakeCredentialToData stakeCredential
+                    |> Data.maybe
+                ]
+
+        Reward { stakeCredential } ->
+            credentialToData stakeCredential
+
+        Byron _ ->
+            Data.Constr N.zero []
+
+
+{-| Convert a Credential to its Data representation.
+-}
+credentialToData : Credential -> Data
+credentialToData credential =
+    case credential of
+        VKeyHash keyHash ->
+            Data.Constr N.zero [ Data.Bytes <| Bytes.toAny keyHash ]
+
+        ScriptHash scriptHash ->
+            Data.Constr N.one [ Data.Bytes <| Bytes.toAny scriptHash ]
+
+
+{-| Decode a Credential from its Data representation.
+-}
+credentialFromData : Data -> Maybe Credential
+credentialFromData data =
+    case data of
+        Data.Constr index [ Data.Bytes keyHash ] ->
+            case ( N.toInt index, Bytes.width keyHash ) of
+                ( 0, 28 ) ->
+                    Just <| VKeyHash <| Bytes.fromHexUnchecked <| Bytes.toHex keyHash
+
+                ( 1, 28 ) ->
+                    Just <| ScriptHash <| Bytes.fromHexUnchecked <| Bytes.toHex keyHash
+
+                _ ->
+                    Nothing
+
+        _ ->
+            Nothing
+
+
+{-| Convert a stake credential into its Data representation.
+
+WARNING: Pointer credentials are not supported.
+They will return just `Constr 1 []` so it’s the caller responsibility to not use them.
+
+-}
+stakeCredentialToData : StakeCredential -> Data
+stakeCredentialToData stakeCredential =
+    case stakeCredential of
+        InlineCredential credential ->
+            Data.Constr N.zero [ credentialToData credential ]
+
+        PointerCredential _ ->
+            Data.Constr N.one []
 
 
 {-| CBOR encoder for [NetworkId].
