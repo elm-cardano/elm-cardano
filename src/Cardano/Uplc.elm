@@ -2,7 +2,7 @@ module Cardano.Uplc exposing
     ( evalScriptsCosts, evalScriptsCostsRaw
     , applyParamsToScript
     , VmConfig, defaultVmConfig, conwayDefaultBudget, conwayDefaultCostModels
-    , SlotConfig, slotConfigMainnet, slotConfigPreview, slotConfigPreprod, timeToSlot
+    , SlotConfig, slotConfigMainnet, slotConfigPreview, slotConfigPreprod, timeToSlot, slotToTime
     )
 
 {-| Handling the UPLC VM
@@ -13,7 +13,7 @@ module Cardano.Uplc exposing
 
 @docs VmConfig, defaultVmConfig, conwayDefaultBudget, conwayDefaultCostModels
 
-@docs SlotConfig, slotConfigMainnet, slotConfigPreview, slotConfigPreprod, timeToSlot
+@docs SlotConfig, slotConfigMainnet, slotConfigPreview, slotConfigPreprod, timeToSlot, slotToTime
 
 -}
 
@@ -269,6 +269,23 @@ timeToSlot { zeroTime, zeroSlot, slotLengthMs } posixMs =
                 |> Maybe.withDefault Natural.zero
     in
     Natural.add zeroSlot slotDiff
+
+
+{-| Convert a slot number into a Posix time (in milliseconds).
+-}
+slotToTime : SlotConfig -> Natural -> Posix
+slotToTime { zeroTime, zeroSlot, slotLengthMs } slot =
+    let
+        slotDiff =
+            Natural.sub slot zeroSlot
+
+        timeDiff =
+            Natural.mul slotDiff (Natural.fromSafeInt slotLengthMs)
+
+        time =
+            Natural.add zeroTime timeDiff
+    in
+    Time.millisToPosix (Natural.toInt time)
 
 
 {-| Default cost models for the Plutus VM currently in the Conway era.
