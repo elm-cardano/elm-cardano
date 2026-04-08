@@ -1,0 +1,34 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <title>elm-cardano · governance proposals on Preview</title>
+  <style>
+    body { font-family: -apple-system, system-ui, sans-serif; margin: 1.5rem; }
+    pre  { background: #f4f4f4; padding: 0.75rem; white-space: pre-wrap; word-break: break-all; }
+    h2   { margin-top: 1.5rem; }
+  </style>
+</head>
+<body>
+  <div id="elm"></div>
+  <script type="module">
+    import * as ElmCardano from "./elm-cardano.js";
+
+    // Loads main.js and attaches it to `window.Elm`.
+    await ElmCardano.loadMain("./main.js");
+
+    const app = Elm.Main.init({
+      node: document.getElementById("elm"),
+      flags: null,
+    });
+
+    // Wire the CIP-30 wallet bridge to this app's ports.
+    ElmCardano.init({
+      portFromElmToWallet: app.ports.toWallet,
+      portFromWalletToElm: app.ports.fromWallet,
+      portFromElmToOgmios: null,
+      portFromOgmiosToElm: null,
+    });
+  </script>
+</body>
+</html>
