@@ -185,6 +185,7 @@ type ActionProposal
 -}
 type TxOtherInfo
     = TxReferenceInput OutputReference
+    | TxRequiredSigner (Bytes CredentialHash)
     | TxMetadata { tag : Natural, metadata : Metadatum }
     | TxTimeValidityRange { start : Int, end : Natural }
 
@@ -1838,6 +1839,7 @@ validateGuardrails localStateUtxos govState preProcessedIntents =
 
 type alias ProcessedOtherInfo =
     { referenceInputs : List OutputReference
+    , requiredSigners : List (Bytes CredentialHash)
     , metadata : List { tag : Natural, metadata : Metadatum }
     , timeValidityRange : Maybe { start : Int, end : Natural }
     }
@@ -1846,6 +1848,7 @@ type alias ProcessedOtherInfo =
 noInfo : ProcessedOtherInfo
 noInfo =
     { referenceInputs = []
+    , requiredSigners = []
     , metadata = []
     , timeValidityRange = Nothing
     }
@@ -1860,6 +1863,9 @@ processOtherInfo otherInfo =
                     case info of
                         TxReferenceInput ref ->
                             { acc | referenceInputs = ref :: acc.referenceInputs }
+
+                        TxRequiredSigner signer ->
+                            { acc | requiredSigners = signer :: acc.requiredSigners }
 
                         TxMetadata m ->
                             { acc | metadata = m :: acc.metadata }
@@ -2212,6 +2218,7 @@ buildTx feeAmount collateralSelection processedIntents otherInfo txContext =
         allExpectedSignatures : List (Bytes CredentialHash)
         allExpectedSignatures =
             [ processedIntents.requiredSigners
+            , otherInfo.requiredSigners
             , processedIntents.expectedSigners
             , walletCredsInInputs
             , withdrawalsStakeCreds
@@ -2342,7 +2349,11 @@ buildTx feeAmount collateralSelection processedIntents otherInfo txContext =
                 else
                     Just (Bytes.dummy 32 "ScriptDataHash")
             , collateral = List.map Tuple.first collateralSelection.selectedUtxos
-            , requiredSigners = processedIntents.requiredSigners
+            , requiredSigners =
+                (processedIntents.requiredSigners ++ otherInfo.requiredSigners)
+                    |> List.map (\signer -> ( signer, () ))
+                    |> Map.fromList
+                    |> Map.keys
             , networkId = Nothing -- not mandatory
             , collateralReturn = collateralReturn
             , totalCollateral = totalCollateral
