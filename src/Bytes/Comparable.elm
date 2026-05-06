@@ -26,12 +26,14 @@ module Bytes.Comparable exposing
 
 -}
 
-import Blake2b
+import Blake2b224
+import Blake2b256
+import Blake2b512
 import Bytes
 import Bytes.Decode as D
 import Bytes.Encode as E
 import Cbor.Encode as Cbor
-import Hex.Convert as Hex
+import Hex
 import Json.Decode as JD
 import Json.Encode as JE
 
@@ -113,7 +115,7 @@ fromText str =
 -}
 fromBytes : Bytes.Bytes -> Bytes a
 fromBytes bs =
-    Bytes (String.toLower <| Hex.toString bs)
+    Bytes (Hex.fromBytes bs)
 
 
 {-| Convert [Bytes] into a hex-encoded String.
@@ -229,28 +231,28 @@ splitStep ( size, u8s ) =
 -}
 blake2b224 : Bytes a -> Bytes b
 blake2b224 bs =
-    hash (Blake2b.blake2b224 Nothing) bs
+    hash (Hex.toBytesUnchecked >> Blake2b224.fromBytes >> Blake2b224.toHex) bs
 
 
 {-| Compute the Blake2b-256 hash (32 bytes) of the given bytes.
 -}
 blake2b256 : Bytes a -> Bytes b
 blake2b256 bs =
-    hash (Blake2b.blake2b256 Nothing) bs
+    hash (Hex.toBytesUnchecked >> Blake2b256.fromBytes >> Blake2b256.toHex) bs
 
 
 {-| Compute the Blake2b-512 hash (64 bytes) of the given bytes.
 -}
 blake2b512 : Bytes a -> Bytes b
 blake2b512 bs =
-    hash (Blake2b.blake2b512 Nothing) bs
+    hash (Hex.toBytesUnchecked >> Blake2b512.fromBytes >> Blake2b512.toHex) bs
 
 
 {-| Helper parameterized hash function.
 -}
-hash : (List Int -> List Int) -> Bytes a -> Bytes b
-hash hashFunction bs =
-    fromU8 <| hashFunction <| toU8 bs
+hash : (String -> String) -> Bytes a -> Bytes b
+hash hashFunction (Bytes bs) =
+    hashFunction bs |> fromHexUnchecked
 
 
 {-| Helper function to make up some bytes of a given length,
