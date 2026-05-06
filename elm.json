@@ -37,7 +37,6 @@
     ],
     "elm-version": "0.19.1 <= v < 0.20.0",
     "dependencies": {
-        "MartinSStewart/elm-uint64": "2.0.0 <= v < 3.0.0",
         "dwayne/elm-integer": "1.0.0 <= v < 2.0.0",
         "dwayne/elm-natural": "1.1.1 <= v < 2.0.0",
         "elm/bytes": "1.0.8 <= v < 2.0.0",
@@ -49,7 +48,6 @@
         "elm-cardano/x-bytes": "1.1.0 <= v < 2.0.0",
         "elm-toulouse/cbor": "4.0.1 <= v < 5.0.0",
         "elmcraft/core-extra": "2.1.0 <= v < 3.0.0",
-        "jxxcarlson/hex": "4.0.1 <= v < 5.0.0",
         "turboMaCk/any-dict": "2.6.0 <= v < 3.0.0"
     },
     "test-dependencies": {

@@ -39,7 +39,7 @@ import Cbor.Decode
 import Cbor.Encode
 import Cbor.Encode.Extra
 import Dict exposing (Dict)
-import Hex.Convert
+import Hex
 import Json.Decode as JDecode exposing (Decoder, Value)
 import Json.Encode as JEncode
 import Natural exposing (Natural)
@@ -177,7 +177,7 @@ getCollateral wallet { amount } =
 encodeCborHex : Cbor.Encode.Encoder -> Value
 encodeCborHex cborEncoder =
     Cbor.Encode.encode cborEncoder
-        |> Hex.Convert.toString
+        |> Hex.fromBytes
         |> JEncode.string
 
 
@@ -604,7 +604,7 @@ hexCborDecoder decoder =
     JDecode.string
         |> JDecode.andThen
             (\str ->
-                case Hex.Convert.toBytes str of
+                case Hex.toBytes str of
                     Just bytes ->
                         case Cbor.Decode.decode decoder bytes of
                             Just a ->

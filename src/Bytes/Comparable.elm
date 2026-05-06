@@ -33,7 +33,6 @@ import Bytes
 import Bytes.Decode as D
 import Bytes.Encode as E
 import Cbor.Encode as Cbor
-import Hex
 import Json.Decode as JD
 import Json.Encode as JE
 import XBytes exposing (XBytes)
@@ -165,11 +164,6 @@ jsonDecoder =
 jsonEncode : Bytes a -> JE.Value
 jsonEncode bs =
     JE.string <| toHex bs
-
-
-absurd : Bytes.Bytes
-absurd =
-    E.encode (E.sequence [])
 
 
 {-| Concatenate two bytes sequences.

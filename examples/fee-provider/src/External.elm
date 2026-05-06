@@ -10,7 +10,7 @@ import Cardano.Utxo as Utxo exposing (DatumOption(..), Output)
 import Cbor.Encode
 import Dict
 import Dict.Any
-import Hex.Convert
+import Hex
 import Html exposing (Html, div, text)
 import Html.Attributes exposing (height, src)
 import Html.Events exposing (onClick)
@@ -222,7 +222,7 @@ update msg model =
 encodeCborHex : Cbor.Encode.Encoder -> Value
 encodeCborHex cborEncoder =
     Cbor.Encode.encode cborEncoder
-        |> Hex.Convert.toString
+        |> Hex.fromBytes
         |> JE.string
 
 
