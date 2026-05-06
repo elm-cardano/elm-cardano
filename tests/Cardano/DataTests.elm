@@ -8,7 +8,7 @@ import Cbor.Test as Cbor
 import Dict.Any
 import Expect
 import Fuzz exposing (Fuzzer)
-import Hex.Convert.Extra as Hex
+import Hex
 import Integer
 import Natural
 import Test exposing (Test, describe, test)
@@ -156,4 +156,4 @@ testEncode bytes data =
 testDecode : String -> Data -> Test
 testDecode bytes data =
     test (Debug.toString data) <|
-        \_ -> bytes |> Hex.fromString |> D.decode Data.fromCbor |> Expect.equal (Just data)
+        \_ -> String.toLower bytes |> Hex.toBytesUnchecked |> D.decode Data.fromCbor |> Expect.equal (Just data)

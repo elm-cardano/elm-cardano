@@ -26,14 +26,16 @@ module Bytes.Comparable exposing
 
 -}
 
-import Blake2b
+import Blake2b224
+import Blake2b256
+import Blake2b512
 import Bytes
 import Bytes.Decode as D
 import Bytes.Encode as E
 import Cbor.Encode as Cbor
-import Hex.Convert as Hex
 import Json.Decode as JD
 import Json.Encode as JE
+import XBytes exposing (XBytes)
 
 
 {-| A custom `Bytes` type that is comparable with `==`.
@@ -43,7 +45,7 @@ The phantom type parameter `a` indicates what type of Bytes are stored.
 
 -}
 type Bytes a
-    = Bytes String
+    = Bytes XBytes
 
 
 {-| A catch-all phantom type for bytes.
@@ -55,8 +57,8 @@ type Any
 {-| Convert any type of bytes to `Bytes Any`.
 -}
 toAny : Bytes a -> Bytes Any
-toAny (Bytes str) =
-    Bytes str
+toAny (Bytes xBytes) =
+    Bytes xBytes
 
 
 {-| Create a [Bytes] object from individual U8 integers.
@@ -69,15 +71,15 @@ fromU8 =
 {-| Check if this is empy.
 -}
 isEmpty : Bytes a -> Bool
-isEmpty (Bytes str) =
-    String.isEmpty str
+isEmpty (Bytes xBytes) =
+    XBytes.isEmpty xBytes
 
 
 {-| Length in bytes.
 -}
 width : Bytes a -> Int
-width (Bytes str) =
-    String.length str // 2
+width (Bytes xBytes) =
+    XBytes.width xBytes
 
 
 {-| Create an empty Bytes object.
@@ -91,50 +93,50 @@ empty =
 -}
 fromHex : String -> Maybe (Bytes a)
 fromHex str =
-    str |> Hex.toBytes |> Maybe.map (always <| Bytes (String.toLower str))
+    XBytes.fromHex str |> Maybe.map Bytes
 
 
 {-| Same as [fromHex] except it does not check that the hex-encoded string is well formed.
 It is your responsability.
 -}
 fromHexUnchecked : String -> Bytes a
-fromHexUnchecked =
-    Bytes
+fromHexUnchecked str =
+    Bytes (XBytes.fromHexUnchecked str)
 
 
 {-| Create a [Bytes] with some text encoded as UTF8.
 -}
 fromText : String -> Bytes a
 fromText str =
-    E.encode (E.string str) |> fromBytes
+    Bytes (XBytes.fromText str)
 
 
 {-| Create a [Bytes] object from an elm/bytes [Bytes.Bytes].
 -}
 fromBytes : Bytes.Bytes -> Bytes a
 fromBytes bs =
-    Bytes (String.toLower <| Hex.toString bs)
+    Bytes (XBytes.fromBytes bs)
 
 
 {-| Convert [Bytes] into a hex-encoded String.
 -}
 toHex : Bytes a -> String
-toHex (Bytes str) =
-    str
+toHex (Bytes xBytes) =
+    XBytes.toHex xBytes
 
 
 {-| Convert [Bytes] into a UTF8 String.
 -}
 toText : Bytes a -> Maybe String
-toText bs =
-    D.decode (D.string <| width bs) (toBytes bs)
+toText (Bytes xBytes) =
+    XBytes.toText xBytes
 
 
 {-| Convert [Bytes] into elm/bytes [Bytes.Bytes].
 -}
 toBytes : Bytes a -> Bytes.Bytes
-toBytes (Bytes str) =
-    str |> Hex.toBytes |> Maybe.withDefault absurd
+toBytes (Bytes xBytes) =
+    XBytes.toBytes xBytes
 
 
 {-| Cbor encoder.
@@ -160,20 +162,15 @@ jsonDecoder =
 {-| JSON encoder for Bytes.
 -}
 jsonEncode : Bytes a -> JE.Value
-jsonEncode (Bytes hex) =
-    JE.string hex
-
-
-absurd : Bytes.Bytes
-absurd =
-    E.encode (E.sequence [])
+jsonEncode bs =
+    JE.string <| toHex bs
 
 
 {-| Concatenate two bytes sequences.
 -}
 concat : Bytes a -> Bytes b -> Bytes c
 concat (Bytes b1) (Bytes b2) =
-    Bytes (b1 ++ b2)
+    Bytes <| XBytes.concat [ b1, b2 ]
 
 
 {-| Break a Bytestring into a list of chunks. Chunks are of the given width,
@@ -229,28 +226,28 @@ splitStep ( size, u8s ) =
 -}
 blake2b224 : Bytes a -> Bytes b
 blake2b224 bs =
-    hash (Blake2b.blake2b224 Nothing) bs
+    hash (XBytes.toBytes >> Blake2b224.fromBytes >> Blake2b224.toHex) bs
 
 
 {-| Compute the Blake2b-256 hash (32 bytes) of the given bytes.
 -}
 blake2b256 : Bytes a -> Bytes b
 blake2b256 bs =
-    hash (Blake2b.blake2b256 Nothing) bs
+    hash (XBytes.toBytes >> Blake2b256.fromBytes >> Blake2b256.toHex) bs
 
 
 {-| Compute the Blake2b-512 hash (64 bytes) of the given bytes.
 -}
 blake2b512 : Bytes a -> Bytes b
 blake2b512 bs =
-    hash (Blake2b.blake2b512 Nothing) bs
+    hash (XBytes.toBytes >> Blake2b512.fromBytes >> Blake2b512.toHex) bs
 
 
 {-| Helper parameterized hash function.
 -}
-hash : (List Int -> List Int) -> Bytes a -> Bytes b
-hash hashFunction bs =
-    fromU8 <| hashFunction <| toU8 bs
+hash : (XBytes -> String) -> Bytes a -> Bytes b
+hash hashFunction (Bytes bs) =
+    hashFunction bs |> fromHexUnchecked
 
 
 {-| Helper function to make up some bytes of a given length,

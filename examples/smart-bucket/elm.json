@@ -7,7 +7,6 @@
     "elm-version": "0.19.1",
     "dependencies": {
         "direct": {
-            "MartinSStewart/elm-uint64": "2.0.0",
             "dwayne/elm-integer": "1.0.0",
             "dwayne/elm-natural": "1.1.1",
             "elm/browser": "1.0.2",
@@ -18,9 +17,10 @@
             "elm/json": "1.1.3",
             "elm/time": "1.0.0",
             "elm-cardano/bech32": "1.0.0",
+            "elm-cardano/blake2b": "2.0.0",
+            "elm-cardano/x-bytes": "1.1.0",
             "elm-toulouse/cbor": "4.0.1",
             "elmcraft/core-extra": "2.1.0",
-            "jxxcarlson/hex": "4.0.0",
             "turboMaCk/any-dict": "2.6.0"
         },
         "indirect": {
@@ -28,7 +28,7 @@
             "elm/regex": "1.0.0",
             "elm/url": "1.0.0",
             "elm/virtual-dom": "1.0.3",
-            "elm-community/list-extra": "8.7.0",
+            "elm-cardano/base64": "1.0.1",
             "elm-toulouse/float16": "1.0.1"
         }
     },
